@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "mobile:ios": "node mobile/build-ios.mjs",
-    "mobile:ios:install": "node mobile/build-ios.mjs --install"
+    "mobile:ios:install": "node mobile/build-ios.mjs --install",
+    "dev:https": "HTTPS=1 vite --host 0.0.0.0"
   },
   "dependencies": {
     "@capacitor/core": "^8.5.2",
@@ -17,6 +18,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@webgpu/types": "^0.1.74",
     "playwright": "^1.63.0",
     "typescript": "~5.9.2",
