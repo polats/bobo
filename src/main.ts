@@ -4,7 +4,7 @@ import { Panel } from './shell/panel';
 import { Pointers } from './shell/pointers';
 import type { Toy, ToyInstance } from './shell/types';
 // Each toy folder exports exactly one Toy from index.ts; the hub lists them in this order.
-const ORDER = ['ink', 'goo'];
+const ORDER = ['ink', 'goo', 'sand', 'pool'];
 const toys = Object.values(import.meta.glob<Record<string, unknown>>('./toys/*/index.ts', { eager: true }))
   .flatMap((m) => Object.values(m).filter(isToy))
   .sort((a, b) => rank(a.id) - rank(b.id));

@@ -1,5 +1,5 @@
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
-import { Program, compile, createDouble, createTarget, destroyTarget, gridSize, type DoubleTarget, type Target } from './gl';
+import { Program, compile, createDouble, createTarget, destroyTarget, gridSize, type DoubleTarget, type Target } from '../../shell/gl';
 import * as S from './shaders';
 
 type Mode = 'neon' | 'paint';
