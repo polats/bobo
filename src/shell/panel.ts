@@ -73,6 +73,28 @@ export class Panel {
     });
   }
 
+  links(items: { title: string; url: string; note?: string }[]) {
+    const row = this.row();
+    const list = document.createElement('ul');
+    list.className = 'refs';
+    for (const it of items) {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = it.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = it.title;
+      li.appendChild(a);
+      if (it.note) {
+        const n = document.createElement('span');
+        n.textContent = it.note;
+        li.appendChild(n);
+      }
+      list.appendChild(li);
+    }
+    row.appendChild(list);
+  }
+
   action(label: string, fn: () => void) {
     const row = this.row();
     const b = document.createElement('button');

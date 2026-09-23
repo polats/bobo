@@ -23,11 +23,22 @@ export interface ToyInstance {
   destroy(): void;
 }
 
+/** A paper, talk or reference implementation a toy is built on. */
+export interface Reference {
+  /** Short credit shown on the hub card, e.g. "Stam 1999". */
+  short: string;
+  title: string;
+  url: string;
+  /** What the toy takes from it. */
+  use: string;
+}
+
 export interface Toy {
   id: string;
   title: string;
   blurb: string;
   tech: string;
   swatch: string;
+  refs: Reference[];
   create(ctx: ToyContext): Promise<ToyInstance>;
 }

@@ -9,7 +9,24 @@ A physics sandbox for playing with novel, satisfying, performant simulations —
 | **Ink Swirl** | Finger-paint glowing fluid; tap to burst, flick to swirl. *Paint* mode mixes colours like real pigment. | Stable Fluids on WebGL2 (`src/toys/ink`) |
 | **Goo Lab** | Pour water, jelly, snow and sand that all interact; poke and squish them. | 2D MLS-MPM on WebGPU compute (`src/toys/goo`) |
 
-Every toy has a **Tune** panel (top right) with live sliders, and an FPS readout (bottom left).
+Every toy has a **Tune** panel (top right) with live sliders, a **Based on** list linking the papers and reference code it uses, and an FPS readout (bottom left).
+
+Play it: https://bobo-ashy-ten.vercel.app (redeploys on every push to `main`).
+
+## Roadmap
+
+Next toys from the backlog in [docs/research/physics.md](docs/research/physics.md#6-toy-backlog-prioritized), with the work each one builds on:
+
+| Toy | Sim | Papers / sources |
+|---|---|---|
+| **Alchemy Sandbox** — falling sand with fire, water, acid, lava, plants, steam | Cellular automata (Margolus blocks on GPU) | [Noita GDC 2019 talk](https://www.youtube.com/watch?v=prXuyMCgbTc) · [Sandspiel](https://github.com/MaxBittker/sandspiel) · [GPU-Falling-Sand-CA](https://github.com/GelamiSalami/GPU-Falling-Sand-CA) · [GPU falling sand blog](https://meatbatgames.com/blog/falling-sand-gpu/) |
+| **Ripple Pool** — caustic-lit pool, rubber ducks, rain | Height-field waves | [evanw/webgl-water](https://github.com/evanw/webgl-water) · [Ten Minute Physics #20](https://matthias-research.github.io/pages/tenMinutePhysics/index.html) · [Jeschke & Wojtan 2023, dispersive shallow water](https://research.nvidia.com/publication/2023-08_generalizing-shallow-water-simulations-dispersive-surface-waves) · [2MP: Dispersion Kernels](https://www.youtube.com/watch?v=FeMSEaHR8aw) |
+| **Splash Tank** — tilt the phone to slosh 3D water | 3D MLS-MPM (reuses Goo Lab) + screen-space fluid rendering | [Hu et al. 2018](https://yuanming.taichi.graphics/publication/2018-mlsmpm/) · [van der Laan et al. 2009, SSFR](https://dl.acm.org/doi/10.1145/1507149.1507164) · [WebGPU-Ocean](https://github.com/matsuoka-601/webgpu-ocean) · [Codrops write-up](https://tympanus.net/codrops/2025/02/26/webgpu-fluid-simulations-high-performance-real-time-rendering/) |
+| **Tear Sheet** — cloth you slash; ropes and chains | XPBD | [Müller et al. 2007, PBD](https://matthias-research.github.io/pages/publications/posBasedDyn.pdf) · [Macklin et al. 2016, XPBD](https://dl.acm.org/doi/10.1145/2994258.2994272) · Ten Minute Physics #14/#15 · [WebGPU XPBD cloth](https://github.com/ccincotti3/webgpu_cloth_simulator) |
+| **Jelly Stack** — wobbly blocks to stack and slap | Shape matching / XPBD (2D), VBD later | [Müller et al. 2005, shape matching](https://dl.acm.org/doi/10.1145/1073204.1073216) · [Vertex Block Descent 2024](https://graphics.cs.utah.edu/research/projects/vbd/) · [2MP: Complementary Dynamics](https://www.youtube.com/watch?v=s8Nm_ytwO6w) |
+| **Demolition Tower** — 1k-block towers, wrecking ball | AVBD 2D or Box2D v3 | [Augmented VBD 2025](https://graphics.cs.utah.edu/research/projects/avbd/) · [avbd-demo2d](https://github.com/savant117/avbd-demo2d) · [Box2D v3](https://box2d.org/posts/2024/08/releasing-box2d-3.0/) · [Müller et al. 2013, fracture](https://dl.acm.org/doi/10.1145/2461912.2461934) |
+| **Campfire** — ignite logs, blow on embers | Ink Swirl's grid fluid + temperature/fuel | [Ten Minute Physics #21 fire](https://matthias-research.github.io/pages/tenMinutePhysics/index.html) · [2MP: Interactive Wood Combustion](https://www.youtube.com/watch?v=2jwVDRKKDME) |
+| **Ferro Blob** — magnetic liquid that spikes at your finger | Particle fluid + magnetic forces (or shader fake) | [2MP: Surface-Only Ferrofluids](https://www.youtube.com/watch?v=nJ86LCA0Asw) · [2MP: Large-scale Ferrofluids](https://www.youtube.com/watch?v=goD36hVVl7M) |
 
 ## Run
 

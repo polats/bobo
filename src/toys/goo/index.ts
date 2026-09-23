@@ -33,6 +33,50 @@ export const gooToy: Toy = {
   blurb: 'Jelly, snow, sand and water from one solver. Pour, drop, stir.',
   tech: 'WebGPU · MLS-MPM',
   swatch: 'linear-gradient(135deg, #ff3d8b, #3d8bff 55%, #f0b458)',
+  refs: [
+    {
+      short: 'Hu 2018',
+      title: 'Hu et al. — MLS-MPM (SIGGRAPH 2018)',
+      url: 'https://yuanming.taichi.graphics/publication/2018-mlsmpm/',
+      use: 'The solver: moving-least-squares MPM, one particle/grid loop for every material.',
+    },
+    {
+      short: 'mpm88',
+      title: 'Taichi — mpm88.py (MLS-MPM in 88 lines)',
+      url: 'https://github.com/taichi-dev/taichi/blob/master/python/taichi/examples/simulation/mpm88.py',
+      use: 'Compact reference for P2G / grid update / G2P.',
+    },
+    {
+      short: 'Jiang 2015',
+      title: 'Jiang et al. — The Affine Particle-In-Cell Method (SIGGRAPH 2015)',
+      url: 'https://dl.acm.org/doi/10.1145/2766996',
+      use: 'APIC transfer (the C matrix) that keeps motion lively without FLIP noise.',
+    },
+    {
+      short: 'Stomakhin 2013',
+      title: 'Stomakhin et al. — A Material Point Method for Snow Simulation (SIGGRAPH 2013)',
+      url: 'http://alexey.stomakhin.com/research/snow.html',
+      use: 'Snow: plasticity clamp on singular values plus hardening.',
+    },
+    {
+      short: 'Klár 2016',
+      title: 'Klár et al. — Drucker-Prager Elastoplasticity for Sand Animation (SIGGRAPH 2016)',
+      url: 'https://dl.acm.org/doi/10.1145/2897824.2925906',
+      use: 'Sand: friction-capped shear via a Drucker–Prager return map.',
+    },
+    {
+      short: 'WebGPU-Ocean',
+      title: 'matsuoka-601 — WebGPU-Ocean',
+      url: 'https://github.com/matsuoka-601/webgpu-ocean',
+      use: 'Browser MLS-MPM reference: fixed-point atomicAdd for P2G in WGSL.',
+    },
+    {
+      short: '2MP',
+      title: 'Two Minute Papers — This Jello Simulation Uses Only ~88 Lines of Code',
+      url: 'https://www.youtube.com/watch?v=9M18rc9-VWU',
+      use: 'The pitch for this toy.',
+    },
+  ],
   create,
 };
 

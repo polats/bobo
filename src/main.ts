@@ -46,10 +46,11 @@ function mountHub() {
     const card = document.createElement('button');
     card.className = 'toy-card';
     card.style.setProperty('--swatch', toy.swatch);
-    card.innerHTML = `<b></b><span></span><em></em>`;
+    card.innerHTML = `<b></b><span></span><em></em><small></small>`;
     card.querySelector('b')!.textContent = toy.title;
     card.querySelector('span')!.textContent = toy.blurb;
     card.querySelector('em')!.textContent = toy.tech;
+    card.querySelector('small')!.textContent = `Based on ${toy.refs.map((r) => r.short).join(' · ')}`;
     card.addEventListener('click', () => (location.hash = toy.id));
     inner.appendChild(card);
   }
@@ -113,6 +114,8 @@ function mountToy(toy: Toy): () => void {
     .then((inst) => {
       if (!alive) return inst.destroy();
       instance = inst;
+      panel.heading('Based on');
+      panel.links(toy.refs.map((r) => ({ title: r.title, url: r.url, note: r.use })));
       console.log(`[bobo] started ${toy.id}`);
       resize();
       start();

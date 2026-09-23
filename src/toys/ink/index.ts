@@ -18,6 +18,44 @@ export const inkToy: Toy = {
   blurb: 'Finger-paint glowing fluid. Swirl, flick, tap to burst. Paint mode mixes like real pigment.',
   tech: 'Stable Fluids · WebGL2',
   swatch: 'linear-gradient(120deg,#ff2d8d,#6d3bff 50%,#18d0ff)',
+  refs: [
+    {
+      short: 'Stam 1999',
+      title: 'Stam — Stable Fluids (SIGGRAPH 1999)',
+      url: 'https://dl.acm.org/doi/10.1145/311535.311548',
+      use: 'The solver: semi-Lagrangian advection + pressure projection, stable at any time step.',
+    },
+    {
+      short: 'Stam 2003',
+      title: 'Stam — Real-Time Fluid Dynamics for Games (GDC 2003)',
+      url: 'https://pdfs.semanticscholar.org/5127/ac7b58e36ffd13ca4437fc123c6a018dc436.pdf',
+      use: 'Game-friendly formulation of the same solver.',
+    },
+    {
+      short: 'GPU Gems 38',
+      title: 'GPU Gems ch. 38 — Fast Fluid Dynamics Simulation on the GPU',
+      url: 'https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-38-fast-fluid-dynamics-simulation-gpu',
+      use: 'Fragment-shader passes: Jacobi pressure, vorticity confinement, splats.',
+    },
+    {
+      short: 'Dobryakov',
+      title: 'Pavel Dobryakov — WebGL Fluid Simulation',
+      url: 'https://github.com/PavelDoGreat/WebGL-Fluid-Simulation',
+      use: 'Reference implementation for pass layout, splat forces and bloom.',
+    },
+    {
+      short: 'TMP #17',
+      title: 'Ten Minute Physics #17 — Eulerian fluid in 200 lines',
+      url: 'https://matthias-research.github.io/pages/tenMinutePhysics/index.html',
+      use: 'Clear walkthrough of the grid solver for anyone tuning it.',
+    },
+    {
+      short: 'Mixbox',
+      title: 'Two Minute Papers — Practical Pigment Mixing (Mixbox)',
+      url: 'https://www.youtube.com/watch?v=b2D_5G_npVI',
+      use: 'Inspiration for Paint mode; we use a simpler Beer–Lambert absorbance mix.',
+    },
+  ],
   async create(ctx) {
     return new Ink(ctx);
   },

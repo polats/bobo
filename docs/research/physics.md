@@ -432,6 +432,7 @@ Quality scaler: per-device tier (particle count, grid res, substeps) + runtime f
 - Müller, Chentanez, Kim, *Real Time Dynamic Fracture with VACD*, SIGGRAPH 2013 — https://dl.acm.org/doi/10.1145/2461912.2461934
 - Macklin et al., *Unified Particle Physics for Real-Time Applications*, SIGGRAPH 2014 — https://mmacklin.com/uppfrta_preprint.pdf
 - Jiang et al., *The Affine Particle-In-Cell Method*, SIGGRAPH 2015 — https://dl.acm.org/doi/10.1145/2766996
+- Klár et al., *Drucker-Prager Elastoplasticity for Sand Animation*, SIGGRAPH 2016 — https://dl.acm.org/doi/10.1145/2897824.2925906
 - Macklin, Müller, Chentanez, *XPBD*, MIG 2016 — https://dl.acm.org/doi/10.1145/2994258.2994272
 - Hu et al., *MLS-MPM*, SIGGRAPH 2018 — https://yuanming.taichi.graphics/publication/2018-mlsmpm/
 - Li et al., *Incremental Potential Contact*, SIGGRAPH 2020 — https://ipc-sim.github.io/
