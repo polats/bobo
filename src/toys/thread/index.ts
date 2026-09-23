@@ -210,6 +210,8 @@ class PullTheThread implements ToyInstance {
 
   private handleInput() {
     const s = this.sim;
+    let rodDriver: { id: number; idx: number } | null = null;
+    let clothDriver: { id: number; idx: number } | null = null;
     for (const p of this.ctx.pointers.active.values()) {
       let g = this.grabs.get(p.id);
       if (p.justDown) {
@@ -221,18 +223,18 @@ class PullTheThread implements ToyInstance {
         this.ctx.haptic('light');
       }
       if (!g) continue;
-      // Only the first finger drives the solver's kinematic grab; that's plenty for one strand.
-      if (g !== [...this.grabs.values()][0]) continue;
-      const src = g.kind === 'rod' ? s.rpos : s.pos;
-      s.grabTarget = this.unproject(p.x, p.y, src, g.idx);
-      s.grabbedRod = g.kind === 'rod' ? g.idx : -1;
-      s.grabbedCloth = g.kind === 'cloth' ? g.idx : -1;
+      // One finger can pull the yarn while another holds the knit: the natural two-handed unravel.
+      if (g.kind === 'rod' && !rodDriver) {
+        rodDriver = { id: p.id, idx: g.idx };
+        s.grabTarget = this.unproject(p.x, p.y, s.rpos, g.idx);
+      } else if (g.kind === 'cloth' && !clothDriver) {
+        clothDriver = { id: p.id, idx: g.idx };
+        s.clothTarget = this.unproject(p.x, p.y, s.pos, g.idx);
+      }
     }
     for (const id of [...this.grabs.keys()]) if (!this.ctx.pointers.active.has(id)) this.grabs.delete(id);
-    if (!this.grabs.size) {
-      s.grabbedRod = -1;
-      s.grabbedCloth = -1;
-    }
+    s.grabbedRod = rodDriver ? rodDriver.idx : -1;
+    s.grabbedCloth = clothDriver ? clothDriver.idx : -1;
   }
 
   /** Yarn first (the loose end wins ties), then the knit; nothing nearby means nothing happens. */

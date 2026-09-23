@@ -64,7 +64,21 @@ export class Knit {
 
   grabbedCloth = -1;
   grabbedRod = -1;
+  /** Finger target for the grabbed yarn particle. */
   grabTarget: [number, number, number] = [0, 0, 0];
+  /** Finger target for the grabbed knit corner (a second hand can hold the knit while the first pulls). */
+  clothTarget: [number, number, number] = [0, 0, 0];
+  /** Set when a yarn particle rests on something (floor, pile, knit) this frame; only supported yarn may sleep. */
+  readonly rsupported: Uint8Array;
+  /** Where each yarn particle was when it last started keeping still; jitter around it still counts as rest. */
+  private readonly rref: Float32Array;
+  // Spatial hash for yarn self-collision and yarn-knit contact (counting sort, as in Ten Minute Physics #11).
+  private readonly hashSize = 4096;
+  private readonly cellStart: Int32Array;
+  private readonly cellEntries: Int32Array;
+  private readonly yarnMin: number;
+  private readonly clothMin: number;
+  private readonly cell: number;
 
   // Per-frame events for the renderer / juice.
   popsThisFrame = 0;
@@ -166,9 +180,18 @@ export class Knit {
     this.rcalm = new Float32Array(this.cap);
     this.rrow = new Uint16Array(this.cap);
     this.rkink = new Float32Array(this.cap);
+    this.rsupported = new Uint8Array(this.cap);
+    this.rref = new Float32Array(this.cap * 3);
+    // Collision sizes: yarn keeps a loose, fluffy spacing in the pile; knit corners act as small spheres.
+    this.yarnMin = this.seg * 0.72;
+    this.clothMin = sw * 0.5 + this.yarnR;
+    this.cell = Math.max(this.yarnMin, this.clothMin);
+    this.cellStart = new Int32Array(this.hashSize + 1);
+    this.cellEntries = new Int32Array(this.cap + np);
     // Tail: dangles from the anchor with a lazy curl, loose end at index 0.
     const a = this.anchor * 3;
-    const tail = 16;
+    // A short tail: the first tug has little slack to take up before the first stitch pops.
+    const tail = 9;
     for (let j = tail; j >= 1; j--) {
       const t = j / tail;
       this.pushRod(this.pos[a] + 0.04 * Math.sin(t * 5), this.pos[a + 1] - j * this.seg * 0.92, this.pos[a + 2] + 0.05 * Math.sin(t * 7) + 0.03, rows - 1);
@@ -206,10 +229,12 @@ export class Knit {
     this.popsThisFrame = 0;
     this.rowsThisFrame = 0;
     this.popEvents.length = 0;
+    this.rsupported.fill(0, 0, this.rn);
     for (let s = 0; s < sub; s++) {
       this.integrate(h);
       this.solveCloth(h);
       this.solveRod(h);
+      if (s % 3 === 2) this.collideYarn();
       this.collide();
       this.updateVelocities(h);
     }
@@ -240,11 +265,13 @@ export class Knit {
       rpos[o] += rvel[o] * h; rpos[o + 1] += rvel[o + 1] * h; rpos[o + 2] += rvel[o + 2] * h;
     }
     // Grabs are kinematic: ease toward the finger.
-    const t = this.grabTarget;
     if (this.grabbedRod >= 0) {
+      const t = this.grabTarget;
       const o = this.grabbedRod * 3;
       rpos[o] += (t[0] - rpos[o]) * 0.5; rpos[o + 1] += (t[1] - rpos[o + 1]) * 0.5; rpos[o + 2] += (t[2] - rpos[o + 2]) * 0.5;
-    } else if (this.grabbedCloth >= 0) {
+    }
+    if (this.grabbedCloth >= 0) {
+      const t = this.clothTarget;
       const o = this.grabbedCloth * 3;
       pos[o] += (t[0] - pos[o]) * 0.5; pos[o + 1] += (t[1] - pos[o + 1]) * 0.5; pos[o + 2] += (t[2] - pos[o + 2]) * 0.5;
     }
@@ -315,6 +342,7 @@ export class Knit {
     const { rpos, rprev, rn, pos, prev, np } = this;
     for (let i = 0; i < rn; i++) {
       const o = i * 3;
+      if (rpos[o + 1] < floor + r + 1e-4) this.rsupported[i] = 1;
       if (rpos[o + 1] < floor + r) {
         rpos[o + 1] = floor + r;
         // Wool on wood: lots of friction.
@@ -334,6 +362,85 @@ export class Knit {
     }
   }
 
+  private hashCell(x: number, y: number, z: number) {
+    const inv = 1 / this.cell;
+    const xi = Math.floor(x * inv), yi = Math.floor(y * inv), zi = Math.floor(z * inv);
+    return Math.abs((xi * 92837111) ^ (yi * 689287499) ^ (zi * 283923481)) % this.hashSize;
+  }
+
+  /**
+   * Yarn against yarn (so the pile heaps up) and against the knit's corners (so hanging yarn stays in front).
+   * Everything goes into one hash; only awake yarn particles query it.
+   */
+  private collideYarn() {
+    const { rpos, rprev, rn, pos, np, partAlive, rfrozen, cellStart, cellEntries, hashSize, cap } = this;
+    cellStart.fill(0);
+    for (let i = 0; i < rn; i++) cellStart[this.hashCell(rpos[i * 3], rpos[i * 3 + 1], rpos[i * 3 + 2])]++;
+    for (let i = 0; i < np; i++) if (partAlive[i]) cellStart[this.hashCell(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2])]++;
+    let acc = 0;
+    for (let c = 0; c < hashSize; c++) {
+      acc += cellStart[c];
+      cellStart[c] = acc;
+    }
+    cellStart[hashSize] = acc;
+    for (let i = 0; i < rn; i++) cellEntries[--cellStart[this.hashCell(rpos[i * 3], rpos[i * 3 + 1], rpos[i * 3 + 2])]] = i;
+    for (let i = 0; i < np; i++) if (partAlive[i]) cellEntries[--cellStart[this.hashCell(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2])]] = cap + i;
+
+    const yMin2 = this.yarnMin * this.yarnMin;
+    const cMin = this.clothMin;
+    const cMin2 = cMin * cMin;
+    const inv = 1 / this.cell;
+    const nearAnchor = rn - 8;
+    const g = this.grabbedRod;
+    for (let i = 0; i < rn; i++) {
+      if (rfrozen[i] || i === g) continue;
+      const o = i * 3;
+      const xi = Math.floor(rpos[o] * inv), yi = Math.floor(rpos[o + 1] * inv), zi = Math.floor(rpos[o + 2] * inv);
+      for (let dx = -1; dx <= 1; dx++)
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dz = -1; dz <= 1; dz++) {
+            const h = Math.abs(((xi + dx) * 92837111) ^ ((yi + dy) * 689287499) ^ ((zi + dz) * 283923481)) % hashSize;
+            for (let e = cellStart[h]; e < cellStart[h + 1]; e++) {
+              const id = cellEntries[e];
+              if (id >= cap) {
+                // Yarn vs a knit corner: push the yarn out; the strand's last few particles thread into the knit.
+                const ci = id - cap;
+                if (i >= nearAnchor || ci === this.anchor) continue;
+                const q = ci * 3;
+                const ex = rpos[o] - pos[q], ey = rpos[o + 1] - pos[q + 1], ez = rpos[o + 2] - pos[q + 2];
+                const d2 = ex * ex + ey * ey + ez * ez;
+                if (d2 >= cMin2 || d2 < 1e-12) continue;
+                const d = Math.sqrt(d2);
+                const push = (cMin - d) / d;
+                rpos[o] += ex * push; rpos[o + 1] += ey * push; rpos[o + 2] += ez * push;
+                rprev[o] += ex * push * 0.5; rprev[o + 1] += ey * push * 0.5; rprev[o + 2] += ez * push * 0.5;
+                if (ey > d * 0.35) this.rsupported[i] = 1;
+                continue;
+              }
+              if (id <= i + 6 && id >= i - 6) continue; // neighbours along the strand (crimp brings them close)
+              if (!rfrozen[id] && id < i) continue; // awake pairs are handled once
+              const q = id * 3;
+              const ex = rpos[o] - rpos[q], ey = rpos[o + 1] - rpos[q + 1], ez = rpos[o + 2] - rpos[q + 2];
+              const d2 = ex * ex + ey * ey + ez * ez;
+              if (d2 >= yMin2 || d2 < 1e-12) continue;
+              const d = Math.sqrt(d2);
+              const corr = (this.yarnMin - d) / d;
+              const other = rfrozen[id] || id === g ? 0 : 0.5;
+              const mine = other ? 0.5 : 1;
+              rpos[o] += ex * corr * mine; rpos[o + 1] += ey * corr * mine; rpos[o + 2] += ez * corr * mine;
+              if (other) {
+                rpos[q] -= ex * corr * other; rpos[q + 1] -= ey * corr * other; rpos[q + 2] -= ez * corr * other;
+              }
+              // Resting on yarn below counts as support, and wool on wool is grippy.
+              if (ey > d * 0.35) this.rsupported[i] = 1;
+              else if (ey < -d * 0.35) this.rsupported[id] = 1;
+              rpos[o] = rprev[o] + (rpos[o] - rprev[o]) * 0.7;
+              rpos[o + 2] = rprev[o + 2] + (rpos[o + 2] - rprev[o + 2]) * 0.7;
+            }
+          }
+    }
+  }
+
   private updateVelocities(h: number) {
     const { pos, prev, vel, rpos, rprev, rvel } = this;
     for (let i = 0; i < this.np * 3; i++) vel[i] = (pos[i] - prev[i]) / h;
@@ -342,20 +449,25 @@ export class Knit {
 
   /** Yarn that has come to rest on the table sleeps, so a big pile costs almost nothing. */
   private sleep(dt: number) {
-    const { rpos, rvel, rfrozen, rcalm, rn } = this;
-    const floor = this.floorY + this.yarnR + 0.004;
+    const { rpos, rvel, rfrozen, rcalm, rn, rsupported, rref } = this;
     const g = this.grabbedRod;
+    const still = this.yarnR * 1.2;
     for (let i = 0; i < rn - 24; i++) {
       if (rfrozen[i]) continue;
+      const o = i * 3;
       if (g >= 0 && Math.abs(i - g) < 30) {
         rcalm[i] = 0;
+        rref[o] = rpos[o]; rref[o + 1] = rpos[o + 1]; rref[o + 2] = rpos[o + 2];
         continue;
       }
-      const o = i * 3;
-      const sp = Math.abs(rvel[o]) + Math.abs(rvel[o + 1]) + Math.abs(rvel[o + 2]);
-      if (rpos[o + 1] <= floor && sp < 0.12) rcalm[i] += dt;
-      else rcalm[i] = 0;
-      if (rcalm[i] > 0.4) {
+      // Rest = staying within a small ball for a moment, so contact jitter in a pile doesn't keep it awake.
+      const dx = rpos[o] - rref[o], dy = rpos[o + 1] - rref[o + 1], dz = rpos[o + 2] - rref[o + 2];
+      if (rsupported[i] && dx * dx + dy * dy + dz * dz < still * still) rcalm[i] += dt;
+      else {
+        rcalm[i] = 0;
+        rref[o] = rpos[o]; rref[o + 1] = rpos[o + 1]; rref[o + 2] = rpos[o + 2];
+      }
+      if (rcalm[i] > 0.35) {
         rfrozen[i] = 1;
         rvel.fill(0, o, o + 3);
       }
@@ -375,7 +487,13 @@ export class Knit {
     const p = this.rpos;
     const q = this.anchor * 3;
     const o = g * 3;
-    const straight = Math.hypot(p[o] - this.pos[q], p[o + 1] - this.pos[q + 1], p[o + 2] - this.pos[q + 2]);
+    // Use the finger itself as well as the grabbed particle: the yarn lags the finger, and a firm tug
+    // should read as tension straight away rather than after the strand has caught up.
+    const t = this.grabTarget;
+    const straight = Math.max(
+      Math.hypot(p[o] - this.pos[q], p[o + 1] - this.pos[q + 1], p[o + 2] - this.pos[q + 2]),
+      Math.hypot(t[0] - this.pos[q], t[1] - this.pos[q + 1], t[2] - this.pos[q + 2]) * 0.985,
+    );
     const restLen = (this.rn - 1 - g) * this.seg + this.seg * 0.4;
     const taut = straight / restLen;
     this.tension = taut;
@@ -432,6 +550,18 @@ export class Knit {
       );
       // Freed yarn springs out toward the finger.
       if (this.rn > first) this.rvel.set([fx * 1.5, fy * 1.5 + 0.4, fz * 1.5 + 0.3], first * 3);
+    }
+    // Juice: the knit jumps toward the pull and the strand near the knot whips outward.
+    for (const ci of [this.anchor, oldA / 3]) {
+      if (this.pinned[ci] || !this.partAlive[ci]) continue;
+      this.vel[ci * 3] += fx * 0.8;
+      this.vel[ci * 3 + 1] += fy * 0.8;
+      this.vel[ci * 3 + 2] += fz * 0.8 + 0.35;
+    }
+    for (let j = Math.max(0, this.rn - k - 6); j < this.rn - k; j++) {
+      if (this.rfrozen[j] || j === this.grabbedRod) continue;
+      this.rvel[j * 3 + 2] += 0.6;
+      this.rvel[j * 3 + 1] += 0.3;
     }
     this.popsThisFrame++;
     this.popEvents.push([this.pos[oldA], this.pos[oldA + 1], this.pos[oldA + 2], r]);

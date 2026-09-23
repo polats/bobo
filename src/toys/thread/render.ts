@@ -270,7 +270,7 @@ export class KnitRenderer {
 
     // Tube strip: per vertex pos3 side3 tangent3 across/along2 color4 = 15 floats; 2 verts per point.
     // Room for the yarn strand, a break, and the needle.
-    this.tubeData = new Float32Array(((sim.cap + 1) * SUBDIV + 40) * 2 * 15);
+    this.tubeData = new Float32Array(((sim.cap + 1) * SUBDIV + 40 + sim.cols * 7) * 2 * 15);
     this.tubeVao = gl.createVertexArray()!;
     gl.bindVertexArray(this.tubeVao);
     this.tubeBuf = gl.createBuffer()!;
@@ -443,14 +443,42 @@ export class KnitRenderer {
       const m = (n - 1) * SUBDIV + 1;
       if (this.smooth.length < m * 3) this.smooth = new Float32Array(((s.cap + 1) * SUBDIV + 1) * 3);
       catmullRom(j, n, SUBDIV, this.smooth);
-      v = this.strip(0, this.smooth, m, s.yarnR, eye, (i) => rowColor(pal, s.rrow[Math.min(Math.floor(i / SUBDIV), s.rn - 1)]), 1, s.yarnR * 5);
+      // The strand between the finger and the knit brightens as it pulls taut: the knot is about to give.
+      const glow = s.grabbedRod >= 0 ? smoothstep(0.82, 1.0, s.tension) * 0.45 : 0;
+      const g0 = s.grabbedRod;
+      v = this.strip(0, this.smooth, m, s.yarnR, eye, (i) => {
+        const pi = Math.min(Math.floor(i / SUBDIV), s.rn - 1);
+        const c = rowColor(pal, s.rrow[pi]);
+        if (glow <= 0 || pi < g0) return c;
+        return [c[0] + (1 - c[0]) * glow, c[1] + (1 - c[1]) * glow, c[2] + (1 - c[2]) * glow];
+      }, 1, s.yarnR * 5);
     }
     const strand = v;
-    const needle = new Float32Array(6 * 3);
+    // The needle is dead straight, so two points make a seamless strip (more points made the camera-facing
+    // strip jog at each joint, which read as notches along the top edge).
+    const needleR = s.sw * 0.28;
     const half = s.width / 2 + 0.2;
-    for (let i = 0; i < 6; i++) needle.set([-half + (2 * half * i) / 5, s.topY + 0.004, 0.0], i * 3);
+    const needle = new Float32Array([-half, s.topY + 0.004, 0, half, s.topY + 0.004, 0]);
     const needleStart = v;
-    v = this.strip(v, needle, 6, s.sw * 0.28, eye, () => [0.62, 0.42, 0.22], 0, 1);
+    v = this.strip(v, needle, 2, needleR, eye, () => [0.62, 0.42, 0.22], 0, 1);
+    // Live loops of the top row wrap over the needle.
+    const loops: number[] = [];
+    const loop = new Float32Array(7 * 3);
+    const lr = needleR + s.yarnR * 0.9;
+    for (let c = 0; c < s.cols; c++) {
+      if (!s.stitchAlive[c]) continue;
+      const a = s.pid(0, c) * 3, b = s.pid(0, c + 1) * 3;
+      const x = (s.pos[a] + s.pos[b]) / 2;
+      const z = (s.pos[a + 2] + s.pos[b + 2]) / 2;
+      for (let k = 0; k < 7; k++) {
+        // From the front of the knit, up over the needle, and down behind it.
+        const ang = -Math.PI / 2 + (k / 6) * Math.PI * 1.25;
+        loop.set([x + (k - 3) * s.sw * 0.03, s.topY + 0.004 + Math.sin(ang) * lr, z + Math.cos(ang) * lr], k * 3);
+      }
+      loops.push(v);
+      const col = rowColor(pal, 0);
+      v = this.strip(v, loop, 7, s.yarnR * 1.15, eye, () => col, 1, s.yarnR * 5);
+    }
     gl.bindBuffer(gl.ARRAY_BUFFER, this.tubeBuf);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.tubeData.subarray(0, v * 15));
     u = this.tube.use();
@@ -459,7 +487,8 @@ export class KnitRenderer {
     gl.uniform3f(u.lightDir, L[0], L[1], L[2]);
     gl.bindVertexArray(this.tubeVao);
     if (strand) gl.drawArrays(gl.TRIANGLE_STRIP, 0, strand);
-    gl.drawArrays(gl.TRIANGLE_STRIP, needleStart, v - needleStart);
+    gl.drawArrays(gl.TRIANGLE_STRIP, needleStart, 4);
+    for (const start of loops) gl.drawArrays(gl.TRIANGLE_STRIP, start, 14);
 
     // Fibre puffs.
     const alive = this.puffs;
@@ -511,6 +540,11 @@ function catmullRom(src: Float32Array, n: number, sub: number, out: Float32Array
   out[k++] = src[(n - 1) * 3];
   out[k++] = src[(n - 1) * 3 + 1];
   out[k++] = src[(n - 1) * 3 + 2];
+}
+
+function smoothstep(a: number, b: number, x: number) {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
 }
 
 function normalize3(a: Vec3): Vec3 {
