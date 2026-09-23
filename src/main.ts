@@ -1,0 +1,216 @@
+import { Capacitor } from '@capacitor/core';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import { Panel } from './shell/panel';
+import { Pointers } from './shell/pointers';
+import type { Toy, ToyInstance } from './shell/types';
+// Each toy folder exports exactly one Toy from index.ts; the hub lists them in this order.
+const ORDER = ['ink', 'goo'];
+const toys = Object.values(import.meta.glob<Record<string, unknown>>('./toys/*/index.ts', { eager: true }))
+  .flatMap((m) => Object.values(m).filter(isToy))
+  .sort((a, b) => rank(a.id) - rank(b.id));
+
+function isToy(v: unknown): v is Toy {
+  return typeof v === 'object' && v !== null && 'create' in v && 'id' in v;
+}
+
+function rank(id: string) {
+  const i = ORDER.indexOf(id);
+  return i < 0 ? ORDER.length : i;
+}
+const app = document.getElementById('app')!;
+
+let teardown: (() => void) | null = null;
+
+function route() {
+  teardown?.();
+  teardown = null;
+  app.replaceChildren();
+  const id = location.hash.replace(/^#\/?/, '');
+  const toy = toys.find((t) => t.id === id);
+  if (toy) teardown = mountToy(toy);
+  else mountHub();
+}
+
+function mountHub() {
+  const hub = document.createElement('div');
+  hub.className = 'hub';
+  const inner = document.createElement('div');
+  inner.className = 'hub-inner';
+  const h1 = document.createElement('h1');
+  h1.textContent = 'bobo';
+  const lede = document.createElement('p');
+  lede.className = 'lede';
+  lede.textContent = 'Physics toys. Poke everything.';
+  inner.append(h1, lede);
+  for (const toy of toys) {
+    const card = document.createElement('button');
+    card.className = 'toy-card';
+    card.style.setProperty('--swatch', toy.swatch);
+    card.innerHTML = `<b></b><span></span><em></em>`;
+    card.querySelector('b')!.textContent = toy.title;
+    card.querySelector('span')!.textContent = toy.blurb;
+    card.querySelector('em')!.textContent = toy.tech;
+    card.addEventListener('click', () => (location.hash = toy.id));
+    inner.appendChild(card);
+  }
+  const caps = document.createElement('p');
+  caps.className = 'caps';
+  const gl2 = document.createElement('canvas').getContext('webgl2') ? 'yes' : 'no';
+  const setCaps = (gpu: string) => {
+    caps.textContent = `WebGPU: ${gpu} · WebGL2: ${gl2} · DPR ${devicePixelRatio}`;
+    console.log(`[bobo] ${caps.textContent} · secure ${isSecureContext}`);
+  };
+  setCaps('checking…');
+  if (!navigator.gpu) setCaps(isSecureContext ? 'no' : 'no (insecure context)');
+  else
+    navigator.gpu
+      .requestAdapter()
+      .then((a) => setCaps(a ? 'yes' : 'no adapter'))
+      .catch(() => setCaps('error'));
+  inner.appendChild(caps);
+  hub.appendChild(inner);
+  app.appendChild(hub);
+}
+
+function mountToy(toy: Toy): () => void {
+  const stage = document.createElement('div');
+  stage.className = 'stage';
+  const canvas = document.createElement('canvas');
+  const overlay = document.createElement('div');
+  const back = hudButton('‹ Toys', 'hud-back', () => (location.hash = ''));
+  const tune = hudButton('Tune', 'hud-tune', () => panel.toggle());
+  const fps = document.createElement('div');
+  fps.className = 'hud-fps';
+  stage.append(canvas, overlay, back, tune, fps);
+  app.appendChild(stage);
+
+  const panel = new Panel(stage);
+  const pointers = new Pointers(canvas);
+  // Full retina resolution is wasted on fluid sims; cap to keep fill-rate sane on phones.
+  const pixelRatio = Math.min(devicePixelRatio, 2);
+  let status = '';
+  let instance: ToyInstance | null = null;
+  let raf = 0;
+  let alive = true;
+
+  const resize = () => {
+    const r = stage.getBoundingClientRect();
+    const w = Math.max(1, Math.round(r.width * pixelRatio));
+    const h = Math.max(1, Math.round(r.height * pixelRatio));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    instance?.resize(w, h);
+  };
+  const ro = new ResizeObserver(resize);
+  ro.observe(stage);
+  resize();
+
+  toy
+    .create({ canvas, overlay, panel, pointers, pixelRatio, setStatus: (s) => (status = s), haptic })
+    .then((inst) => {
+      if (!alive) return inst.destroy();
+      instance = inst;
+      resize();
+      start();
+    })
+    .catch((err) => {
+      console.error(err);
+      const n = document.createElement('div');
+      n.className = 'notice';
+      n.textContent = `${toy.title} could not start: ${err instanceof Error ? err.message : err}`;
+      overlay.appendChild(n);
+    });
+
+  function start() {
+    let last = performance.now();
+    const t0 = last;
+    let acc = 0;
+    let frames = 0;
+    let worst = 0;
+    const loop = (now: number) => {
+      raf = requestAnimationFrame(loop);
+      const raw = (now - last) / 1000;
+      last = now;
+      const dt = Math.min(raw, 1 / 30);
+      if (window.boboAutoplay) autoplay(pointers, (now - t0) / 1000);
+      instance!.frame(dt, (now - t0) / 1000);
+      pointers.endFrame(dt);
+      acc += raw;
+      frames++;
+      worst = Math.max(worst, raw);
+      if (acc >= 0.5) {
+        if (window.boboAutoplay && Math.floor((now - t0) / 5000) !== Math.floor((now - t0 - raw * 1000) / 5000)) {
+          console.log(`[bobo] ${toy.id} ${Math.round(frames / acc)} fps worst ${Math.round(worst * 1000)}ms ${status}`);
+        }
+        fps.textContent = `${Math.round(frames / acc)} fps · worst ${Math.round(worst * 1000)}ms${status ? '\n' + status : ''}`;
+        acc = 0;
+        frames = 0;
+        worst = 0;
+      }
+    };
+    raf = requestAnimationFrame(loop);
+  }
+
+  return () => {
+    alive = false;
+    cancelAnimationFrame(raf);
+    ro.disconnect();
+    pointers.destroy();
+    instance?.destroy();
+  };
+}
+
+/** Debug soak input: a fake finger tracing a figure-eight so FPS is measured under interaction. */
+function autoplay(pointers: Pointers, t: number) {
+  const id = -1;
+  const x = 0.5 + 0.32 * Math.sin(t * 1.3);
+  const y = 0.5 + 0.25 * Math.sin(t * 2.6);
+  const p = pointers.active.get(id);
+  // Lift the finger for half a second every 6 seconds so tap/pour-start paths run too.
+  if (t % 6 > 5.5) {
+    pointers.active.delete(id);
+    return;
+  }
+  if (!p) pointers.active.set(id, { id, x, y, dx: 0, dy: 0, down: true, justDown: true, held: 0 });
+  else {
+    p.dx = x - p.x;
+    p.dy = y - p.y;
+    p.x = x;
+    p.y = y;
+  }
+}
+
+function hudButton(text: string, cls: string, onClick: () => void) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = `hud-btn ${cls}`;
+  b.textContent = text;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+let lastHaptic = 0;
+function haptic(strength: 'light' | 'medium' | 'heavy' = 'light') {
+  const now = performance.now();
+  if (now - lastHaptic < 40) return;
+  lastHaptic = now;
+  if (Capacitor.isNativePlatform()) {
+    const style = strength === 'heavy' ? ImpactStyle.Heavy : strength === 'medium' ? ImpactStyle.Medium : ImpactStyle.Light;
+    Haptics.impact({ style }).catch(() => {});
+  } else {
+    navigator.vibrate?.(strength === 'heavy' ? 18 : strength === 'medium' ? 10 : 5);
+  }
+}
+
+declare global {
+  interface Window {
+    boboStartToy?: string;
+    boboAutoplay?: boolean;
+  }
+}
+
+addEventListener('hashchange', route);
+if (window.boboStartToy && !location.hash) location.hash = window.boboStartToy;
+else route();

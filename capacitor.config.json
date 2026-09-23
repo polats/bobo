@@ -1,0 +1,8 @@
+{
+  "appId": "com.polats.bobo",
+  "appName": "bobo",
+  "webDir": "dist",
+  "backgroundColor": "#07070b",
+  "server": { "iosScheme": "capacitor" },
+  "ios": { "contentInset": "never", "backgroundColor": "#07070b" }
+}
