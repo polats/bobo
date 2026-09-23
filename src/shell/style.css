@@ -35,63 +35,140 @@ html, body {
   position: absolute;
   inset: 0;
   overflow-y: auto;
-  padding: calc(28px + var(--safe-top)) 16px calc(32px + var(--safe-bottom));
+  padding: calc(24px + var(--safe-top)) 16px calc(28px + var(--safe-bottom));
+  background:
+    radial-gradient(120% 60% at 10% -10%, rgba(255, 90, 160, 0.18), transparent 60%),
+    radial-gradient(120% 60% at 100% 0%, rgba(80, 160, 255, 0.16), transparent 60%),
+    var(--bg);
 }
 
-.hub-inner { max-width: 560px; margin: 0 auto; }
+.hub-inner { max-width: 720px; margin: 0 auto; }
+
+.hub-header { margin: 4px 2px 18px; }
 
 .hub h1 {
-  margin: 0 0 4px;
-  font-size: 40px;
-  letter-spacing: -0.04em;
+  display: inline-block;
+  margin: 0;
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: -0.05em;
   line-height: 1;
+  background: linear-gradient(90deg, #ff7ab6, #ffd166 45%, #6ee7ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
-.hub .lede { margin: 0 0 24px; color: var(--muted); }
+.hub .lede { margin: 6px 0 0; color: var(--muted); }
 
-.toy-card {
-  display: block;
-  width: 100%;
-  margin-bottom: 14px;
-  padding: 18px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: var(--card);
-  color: inherit;
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (min-width: 640px) {
+  .tile-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+}
+
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 176px;
+  padding: 14px;
+  border: 0;
+  border-radius: 22px;
+  overflow: hidden;
+  color: #fff;
   text-align: left;
   font: inherit;
   cursor: pointer;
-  position: relative;
-  overflow: hidden;
+  isolation: isolate;
+  background: var(--swatch);
+  box-shadow: 0 10px 28px -14px rgba(0, 0, 0, 0.8), inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  transition: transform 0.12s ease;
 }
 
-.toy-card::before {
+/* Darken toward the bottom so white text reads on every swatch. */
+.tile::before {
   content: "";
   position: absolute;
   inset: 0;
-  background: var(--swatch);
-  opacity: 0.18;
+  z-index: -1;
+  background: linear-gradient(180deg, rgba(10, 8, 20, 0.05) 0%, rgba(10, 8, 20, 0.35) 45%, rgba(10, 8, 20, 0.82) 100%);
+}
+
+/* Soft glossy highlight in the top corner. */
+.tile::after {
+  content: "";
+  position: absolute;
+  top: -40%;
+  right: -30%;
+  width: 90%;
+  height: 90%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.28), transparent);
   pointer-events: none;
 }
 
-.toy-card:active { transform: scale(0.985); }
-.toy-card b { display: block; font-size: 22px; letter-spacing: -0.02em; position: relative; }
-.toy-card span { display: block; margin-top: 4px; color: var(--muted); position: relative; }
-.toy-card em {
-  display: inline-block;
-  margin-top: 10px;
-  padding: 2px 8px;
-  border-radius: 99px;
-  border: 1px solid var(--line);
-  font-style: normal;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  position: relative;
+.tile:active { transform: scale(0.97); }
+.tile:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+
+.tile-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.22);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+.tile-icon svg { width: 26px; height: 26px; }
+
+.tile-text { display: flex; flex-direction: column; gap: 4px; margin-top: auto; }
+.tile-text b { font-size: 17px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.15; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35); }
+.tile-blurb {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.82);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.caps { margin-top: 20px; color: var(--muted); font-size: 12px; }
+.tile-top { display: flex; width: 100%; align-items: flex-start; justify-content: space-between; }
+
+.tile-platform {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 3px 7px;
+  border-radius: 99px;
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.tile-tech {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.3;
+}
+
+.tile.needs-gpu { filter: grayscale(0.85) brightness(0.7); }
+.tile.needs-gpu .tile-platform::after { content: " needed"; }
+
+.caps { margin: 18px 2px 0; color: var(--muted); font-size: 12px; }
 
 /* ---------- toy view ---------- */
 

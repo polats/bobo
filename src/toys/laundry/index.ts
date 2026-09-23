@@ -8,7 +8,7 @@ export const laundryToy: Toy = {
   title: 'Laundry Line',
   blurb: 'Swipe to blow a gust, hold for a storm. Clothespins pop and the washing flies away.',
   tech: 'XPBD cloth + rope · WebGL2',
-  swatch: 'linear-gradient(135deg,#7cc7ff,#ffffff 45%,#8fd16a)',
+  swatch: 'linear-gradient(150deg,#46a8ff,#5bc8e8 45%,#6cc44a)',
   refs: [
     {
       short: 'TMP #14',

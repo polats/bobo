@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Panel } from './shell/panel';
 import { Pointers } from './shell/pointers';
+import { toyIcon } from './shell/icons';
 import type { Toy, ToyInstance } from './shell/types';
 // Each toy folder exports exactly one Toy from index.ts; the hub lists them in this order.
 const ORDER = ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread'];
@@ -36,23 +37,30 @@ function mountHub() {
   hub.className = 'hub';
   const inner = document.createElement('div');
   inner.className = 'hub-inner';
-  const h1 = document.createElement('h1');
-  h1.textContent = 'bobo';
-  const lede = document.createElement('p');
-  lede.className = 'lede';
-  lede.textContent = 'Physics toys. Poke everything.';
-  inner.append(h1, lede);
+  const header = document.createElement('header');
+  header.className = 'hub-header';
+  header.innerHTML = `<h1>bobo</h1><p class="lede">Physics toys. Poke everything.</p>`;
+  const grid = document.createElement('div');
+  grid.className = 'tile-grid';
+  const gpuTiles: HTMLElement[] = [];
   for (const toy of toys) {
-    const card = document.createElement('button');
-    card.className = 'toy-card';
-    card.style.setProperty('--swatch', toy.swatch);
-    card.innerHTML = `<b></b><span></span><em></em><small></small>`;
-    card.querySelector('b')!.textContent = toy.title;
-    card.querySelector('span')!.textContent = toy.blurb;
-    card.querySelector('em')!.textContent = toy.tech;
-    card.querySelector('small')!.textContent = `Based on ${toy.refs.map((r) => r.short).join(' · ')}`;
-    card.addEventListener('click', () => (location.hash = toy.id));
-    inner.appendChild(card);
+    const tile = document.createElement('button');
+    tile.type = 'button';
+    tile.className = 'tile';
+    tile.style.setProperty('--swatch', toy.swatch);
+    tile.innerHTML = `<span class="tile-top"><span class="tile-icon"></span><span class="tile-platform"></span></span><span class="tile-text"><b></b><span class="tile-blurb"></span></span><em class="tile-tech"></em>`;
+    tile.querySelector('.tile-icon')!.innerHTML = toyIcon(toy.id);
+    tile.querySelector('b')!.textContent = toy.title;
+    tile.querySelector('.tile-blurb')!.textContent = toy.blurb;
+    // "Stable Fluids · WebGL2" → platform badge + technique label.
+    const parts = toy.tech.split('·').map((x) => x.trim());
+    const platform = parts.find((x) => /WebGL2|WebGPU/.test(x)) ?? '';
+    tile.querySelector('.tile-platform')!.textContent = platform;
+    tile.querySelector('.tile-tech')!.textContent = parts.filter((x) => x !== platform).join(' · ');
+    tile.title = `Based on ${toy.refs.map((r) => r.short).join(' · ')}`;
+    tile.addEventListener('click', () => (location.hash = toy.id));
+    if (/WebGPU/.test(toy.tech)) gpuTiles.push(tile);
+    grid.appendChild(tile);
   }
   const caps = document.createElement('p');
   caps.className = 'caps';
@@ -60,6 +68,8 @@ function mountHub() {
   const setCaps = (gpu: string) => {
     caps.textContent = `WebGPU: ${gpu} · WebGL2: ${gl2} · DPR ${devicePixelRatio}`;
     console.log(`[bobo] ${caps.textContent} · secure ${isSecureContext}`);
+    // Flag WebGPU toys that can't run here instead of letting them fail on open.
+    if (gpu !== 'yes' && gpu !== 'checking…') gpuTiles.forEach((t) => t.classList.add('needs-gpu'));
   };
   setCaps('checking…');
   if (!navigator.gpu) setCaps(isSecureContext ? 'no' : 'no (insecure context)');
@@ -68,7 +78,7 @@ function mountHub() {
       .requestAdapter()
       .then((a) => setCaps(a ? 'yes' : 'no adapter'))
       .catch(() => setCaps('error'));
-  inner.appendChild(caps);
+  inner.append(header, grid, caps);
   hub.appendChild(inner);
   app.appendChild(hub);
 }
