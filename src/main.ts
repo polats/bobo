@@ -4,7 +4,7 @@ import { Panel } from './shell/panel';
 import { Pointers } from './shell/pointers';
 import type { Toy, ToyInstance } from './shell/types';
 // Each toy folder exports exactly one Toy from index.ts; the hub lists them in this order.
-const ORDER = ['ink', 'goo', 'sand', 'pool'];
+const ORDER = ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth'];
 const toys = Object.values(import.meta.glob<Record<string, unknown>>('./toys/*/index.ts', { eager: true }))
   .flatMap((m) => Object.values(m).filter(isToy))
   .sort((a, b) => rank(a.id) - rank(b.id));
@@ -139,7 +139,8 @@ function mountToy(toy: Toy): () => void {
       raf = requestAnimationFrame(loop);
       const raw = (now - last) / 1000;
       last = now;
-      const dt = Math.min(raw, 1 / 30);
+      // Clamp both ends: long stalls would explode sims, zero-length frames would divide by zero.
+      const dt = Math.min(Math.max(raw, 1 / 1000), 1 / 30);
       if (window.boboAutoplay) autoplay(pointers, (now - t0) / 1000);
       instance!.frame(dt, (now - t0) / 1000);
       pointers.endFrame(dt);

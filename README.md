@@ -10,6 +10,7 @@ A physics sandbox for playing with novel, satisfying, performant simulations —
 | **Goo Lab** | Pour water, jelly, snow and sand that all interact; poke and squish them. | 2D MLS-MPM on WebGPU compute (`src/toys/goo`) |
 | **Alchemy Sandbox** | Falling-sand chemistry: fire, water, lava, acid, plants, ice, gunpowder and more react with each other. | Cellular automaton on CPU + WebGL2 glow (`src/toys/sand`) |
 | **Ripple Pool** | Poke a sunlit pool, watch caustics dance, grab and fling rubber ducks, make it rain. | Height-field waves + mesh caustics on WebGL2 (`src/toys/pool`) |
+| **Tear Sheet** | Pull a velvet curtain until it rips, slash it with a swipe, throw balls into a flag or a hammock. | XPBD cloth on CPU + WebGL2 (`src/toys/cloth`) |
 
 Every toy has a **Tune** panel (top right) with live sliders, a **Based on** list linking the papers and reference code it uses, and an FPS readout (top centre).
 
@@ -22,7 +23,6 @@ Next toys from the backlog in [docs/research/physics.md](docs/research/physics.m
 | Toy | Sim | Papers / sources |
 |---|---|---|
 | **Splash Tank** — tilt the phone to slosh 3D water | 3D MLS-MPM (reuses Goo Lab) + screen-space fluid rendering | [Hu et al. 2018](https://yuanming.taichi.graphics/publication/2018-mlsmpm/) · [van der Laan et al. 2009, SSFR](https://dl.acm.org/doi/10.1145/1507149.1507164) · [WebGPU-Ocean](https://github.com/matsuoka-601/webgpu-ocean) · [Codrops write-up](https://tympanus.net/codrops/2025/02/26/webgpu-fluid-simulations-high-performance-real-time-rendering/) |
-| **Tear Sheet** — cloth you slash; ropes and chains | XPBD | [Müller et al. 2007, PBD](https://matthias-research.github.io/pages/publications/posBasedDyn.pdf) · [Macklin et al. 2016, XPBD](https://dl.acm.org/doi/10.1145/2994258.2994272) · Ten Minute Physics #14/#15 · [WebGPU XPBD cloth](https://github.com/ccincotti3/webgpu_cloth_simulator) |
 | **Jelly Stack** — wobbly blocks to stack and slap | Shape matching / XPBD (2D), VBD later | [Müller et al. 2005, shape matching](https://dl.acm.org/doi/10.1145/1073204.1073216) · [Vertex Block Descent 2024](https://graphics.cs.utah.edu/research/projects/vbd/) · [2MP: Complementary Dynamics](https://www.youtube.com/watch?v=s8Nm_ytwO6w) |
 | **Demolition Tower** — 1k-block towers, wrecking ball | AVBD 2D or Box2D v3 | [Augmented VBD 2025](https://graphics.cs.utah.edu/research/projects/avbd/) · [avbd-demo2d](https://github.com/savant117/avbd-demo2d) · [Box2D v3](https://box2d.org/posts/2024/08/releasing-box2d-3.0/) · [Müller et al. 2013, fracture](https://dl.acm.org/doi/10.1145/2461912.2461934) |
 | **Campfire** — ignite logs, blow on embers | Ink Swirl's grid fluid + temperature/fuel | [Ten Minute Physics #21 fire](https://matthias-research.github.io/pages/tenMinutePhysics/index.html) · [2MP: Interactive Wood Combustion](https://www.youtube.com/watch?v=2jwVDRKKDME) |
