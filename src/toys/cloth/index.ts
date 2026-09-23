@@ -61,7 +61,9 @@ class TearSheet implements ToyInstance {
   private viewProj!: Mat4;
   private eye: Vec3 = [0, 0, 3];
   private tool: Tool = 'grab';
-  private grabs = new Map<number, number>();
+  private grabs = new Map<number, Cloth['handles'][number]>();
+  private strainClock = 0;
+  private shake = 0;
   private lastCut = new Map<number, [number, number]>();
   private trail: TrailPoint[] = [];
   private dock: HTMLElement;
@@ -73,7 +75,7 @@ class TearSheet implements ToyInstance {
     scene: 'curtain' as Scene,
     resolution: 34,
     substeps: 12,
-    tear: 1.8,
+    tear: 1.6,
     bend: 0.8,
     wind: 0,
     gravity: 9.8,
@@ -100,6 +102,7 @@ class TearSheet implements ToyInstance {
     this.renderer = new ClothRenderer(this.gl, this.sim);
     this.grabs.clear();
     this.tornTotal = 0;
+    this.shake = 0;
     this.updateCamera();
     // Hammock is for dropping things on; default to the ball tool there.
     this.setTool(c.scene === 'hammock' ? 'ball' : c.scene === 'flag' ? 'ball' : 'grab');
@@ -131,6 +134,11 @@ class TearSheet implements ToyInstance {
       target = [s.scene === 'flag' ? 0.1 : 0, s.scene === 'flag' ? 0.1 : -0.15, 0];
       const need = Math.max(h, w / aspect) / (2 * Math.tan(fov / 2));
       eye = [target[0], target[1] + 0.15, need];
+    }
+    if (this.shake > 1e-4) {
+      const j = () => (Math.random() - 0.5) * this.shake;
+      eye = [eye[0] + j(), eye[1] + j(), eye[2]];
+      target = [target[0] + j() * 0.5, target[1] + j() * 0.5, target[2]];
     }
     this.eye = eye;
     this.view = lookAt(eye, target, [0, 1, 0]);
@@ -176,7 +184,7 @@ class TearSheet implements ToyInstance {
         this.rebuild();
       },
     );
-    panel.slider(c, 'tear', { label: 'Toughness (4 = unbreakable)', min: 1.15, max: 4, step: 0.05, onChange: () => this.syncSim() });
+    panel.slider(c, 'tear', { label: 'Toughness (4 = unbreakable)', min: 1.1, max: 4, step: 0.05, onChange: () => this.syncSim() });
     panel.slider(c, 'bend', { label: 'Floppiness', min: 0, max: 5, step: 0.1, onChange: () => this.syncSim() });
     panel.slider(c, 'wind', { label: 'Wind', min: 0, max: 14, step: 0.5, onChange: () => this.syncSim() });
     panel.slider(c, 'gravity', { label: 'Gravity', min: 0, max: 20, step: 0.5, onChange: () => this.syncSim() });
@@ -200,40 +208,58 @@ class TearSheet implements ToyInstance {
     this.sim.step(dt, t);
     const simMs = performance.now() - t0;
     this.tornTotal += this.sim.tornThisFrame;
-    if (this.sim.tornThisFrame > 0) this.ctx.haptic(this.sim.tornThisFrame > 6 ? 'medium' : 'light');
+    this.feel(dt);
     for (const p of this.trail) p.age += dt;
     while (this.trail.length && this.trail[0].age > 0.35) this.trail.shift();
     this.renderer.draw(this.width, this.height, this.view, this.proj, this.viewProj, this.eye, FABRIC[this.sim.scene], this.trail);
-    let alive = 0;
-    for (let i = 0; i < this.sim.nt; i++) alive += this.sim.triAlive[i];
-    this.ctx.setStatus(`${this.sim.n} particles · ${Math.round((100 * alive) / this.sim.nt)}% intact · sim ${simMs.toFixed(1)}ms`);
+    this.ctx.setStatus(`${this.sim.n} particles · ${this.tornTotal} rips · strain ${Math.round(this.sim.maxStrain * 100)}% · sim ${simMs.toFixed(1)}ms`);
+  }
+
+  /** Build-up and release: ticks speed up with strain while you pull, then a snap and a jolt on each rip. */
+  private feel(dt: number) {
+    const s = this.sim;
+    if (s.tornThisFrame > 0) {
+      this.ctx.haptic(s.tornThisFrame >= 3 ? 'heavy' : 'medium');
+      this.shake = Math.min(0.03, this.shake + 0.008 * Math.min(3, s.tornThisFrame));
+      this.strainClock = 0;
+    } else if (this.grabs.size && s.maxStrain > 0.06) {
+      const k = Math.min(1, (s.maxStrain - 0.06) / 0.35);
+      this.strainClock += dt;
+      if (this.strainClock > 0.22 - 0.18 * k) {
+        this.strainClock = 0;
+        this.ctx.haptic(k > 0.6 ? 'medium' : 'light');
+      }
+    }
+    if (this.shake > 1e-4) {
+      this.shake *= Math.exp(-dt * 12);
+      this.updateCamera();
+    }
   }
 
   private handleInput(dt: number) {
     const s = this.sim;
     for (const p of this.ctx.pointers.active.values()) {
       if (this.tool === 'grab') {
-        let idx = this.grabs.get(p.id);
-        if (p.justDown || idx === undefined) {
+        let hd = this.grabs.get(p.id);
+        if (!hd) {
           if (!p.justDown) continue;
-          idx = this.pick(p.x, p.y);
+          const idx = this.pick(p.x, p.y);
           if (idx < 0) continue;
-          this.grabs.set(p.id, idx);
+          hd = this.makeHandle(idx);
+          this.grabs.set(p.id, hd);
+          s.handles.push(hd);
           this.ctx.haptic('light');
         }
-        // Only one grabbed vertex is driven by the solver; extra fingers pin theirs directly.
-        const target = this.unproject(p.x, p.y, idx);
-        if (idx === [...this.grabs.values()][0]) {
-          s.grabbed = idx;
-          s.grabTarget = target;
-        } else if (s.invMass[idx] > 0) {
-          s.pos.set(target, idx * 3);
-          s.vel.fill(0, idx * 3, idx * 3 + 3);
-        }
+        hd.target = this.unprojectAt(p.x, p.y, hd.target);
       } else if (this.tool === 'cut') {
         const last = this.lastCut.get(p.id);
         if (last) {
-          const cut = s.cut((x, y, z) => projectPoint(this.viewProj, x, y, z), last[0], last[1], p.x, p.y);
+          const ra = this.rayDir(last[0], last[1]);
+          const rb = this.rayDir(p.x, p.y);
+          const bn = normalize([ra[1] * rb[2] - ra[2] * rb[1], ra[2] * rb[0] - ra[0] * rb[2], ra[0] * rb[1] - ra[1] * rb[0]]);
+          // The blade plane passes through the eye and both swipe points.
+          const plane: [number, number, number, number] = [bn[0], bn[1], bn[2], -dot(bn, this.eye)];
+          const cut = s.cut((x, y, z) => projectPoint(this.viewProj, x, y, z), last[0], last[1], p.x, p.y, plane);
           if (cut) {
             this.tornTotal += cut;
             this.ctx.haptic(cut > 4 ? 'medium' : 'light');
@@ -245,10 +271,13 @@ class TearSheet implements ToyInstance {
         this.throwBall(p.x, p.y);
       }
     }
-    for (const id of [...this.grabs.keys()]) if (!this.ctx.pointers.active.has(id)) this.grabs.delete(id);
+    for (const [id, hd] of [...this.grabs]) {
+      if (this.ctx.pointers.active.has(id)) continue;
+      this.grabs.delete(id);
+      s.handles.splice(s.handles.indexOf(hd), 1);
+    }
     for (const id of [...this.lastCut.keys()]) if (!this.ctx.pointers.active.has(id)) this.lastCut.delete(id);
-    if (!this.grabs.size) s.grabbed = -1;
-    else s.grabbed = [...this.grabs.values()][0];
+    s.grabbed = -1;
     void dt;
   }
 
@@ -270,6 +299,35 @@ class TearSheet implements ToyInstance {
       }
     }
     return best;
+  }
+
+  /** A palm-sized patch around the picked particle, held softly (strong at the centre, light at the rim). */
+  private makeHandle(idx: number): Cloth['handles'][number] {
+    const s = this.sim;
+    const R = 0.11;
+    const cx = s.pos[idx * 3], cy = s.pos[idx * 3 + 1], cz = s.pos[idx * 3 + 2];
+    const verts: number[] = [];
+    const offsets: number[] = [];
+    const weights: number[] = [];
+    for (let i = 0; i < s.n; i++) {
+      if (s.invMass[i] === 0) continue;
+      const dx = s.pos[i * 3] - cx, dy = s.pos[i * 3 + 1] - cy, dz = s.pos[i * 3 + 2] - cz;
+      const d = Math.hypot(dx, dy, dz);
+      if (d > R) continue;
+      verts.push(i);
+      offsets.push(dx, dy, dz);
+      weights.push(0.04 + 0.26 * (1 - (d / R) ** 2));
+    }
+    return { verts: Int32Array.from(verts), offsets: Float32Array.from(offsets), weights: Float32Array.from(weights), target: [cx, cy, cz] };
+  }
+
+  /** World point under the pointer on the camera-facing plane through `p`. */
+  private unprojectAt(x: number, y: number, p: Vec3): Vec3 {
+    const dir = this.rayDir(x, y);
+    const camFwd: Vec3 = [-this.view[2], -this.view[6], -this.view[10]];
+    const depth = dot(sub(p, this.eye), camFwd);
+    const t = depth / dot(dir, camFwd);
+    return [this.eye[0] + dir[0] * t, this.eye[1] + dir[1] * t, this.eye[2] + dir[2] * t];
   }
 
   /** World point under the pointer on the camera-facing plane through particle `idx`'s current depth. */

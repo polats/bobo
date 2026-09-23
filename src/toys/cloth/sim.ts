@@ -30,30 +30,41 @@ export interface Ball {
 export class Cloth {
   readonly cols: number;
   readonly rows: number;
-  readonly n: number;
-  readonly pos: Float32Array;
-  readonly prev: Float32Array;
-  readonly vel: Float32Array;
-  readonly invMass: Float32Array;
-  readonly uv: Float32Array;
-  readonly pinned: Uint8Array;
+  n: number;
+  pos: Float32Array;
+  prev: Float32Array;
+  vel: Float32Array;
+  invMass: Float32Array;
+  uv: Float32Array;
+  pinned: Uint8Array;
   // Constraints
-  readonly ca: Int32Array;
-  readonly cb: Int32Array;
-  readonly rest: Float32Array;
-  readonly kind: Uint8Array;
-  readonly alive: Uint8Array;
+  ca: Int32Array;
+  cb: Int32Array;
+  rest: Float32Array;
+  kind: Uint8Array;
+  alive: Uint8Array;
   /** For bend constraints: the two stretch constraints they span; the bend dies with either. */
-  readonly bendVia: Int32Array;
-  readonly nc: number;
+  bendVia: Int32Array;
+  nc: number;
   // Triangles
-  readonly tris: Uint32Array;
-  readonly triEdges: Int32Array;
+  tris: Uint32Array;
+  triEdges: Int32Array;
   readonly triAlive: Uint8Array;
   readonly nt: number;
   /** Bumps whenever triangles die so the renderer can rebuild its index buffer. */
   topology = 0;
   tornThisFrame = 0;
+  /** Per-constraint tear threshold multiplier: random wobble plus crack-tip weakening. */
+  weak!: Float32Array;
+  /** Per-particle stretch (len / rest - 1) from the last substep, for stress whitening. */
+  strain!: Float32Array;
+  maxStrain = 0;
+  /** Finger holds: soft attachments of a patch of particles to a moving target. */
+  handles: { verts: Int32Array; offsets: Float32Array; weights: Float32Array; target: [number, number, number] }[] = [];
+  private pending: number[] = [];
+  private queued!: Uint8Array;
+  private capP = 0;
+  private capC = 0;
   /** Seconds since creation; tearing waits for the cloth to settle after a reset. */
   age = 0;
   readonly width: number;
@@ -67,7 +78,7 @@ export class Cloth {
   cfg = {
     substeps: 12,
     gravity: 9.8,
-    stretchCompliance: 0,
+    stretchCompliance: 1.5e-7, // a little give, so you see the fabric strain before it rips
     bendCompliance: 0.8,
     tear: 1.8, // break when stretched past this multiple of rest length; <= 0 means indestructible
     wind: 0,
@@ -194,6 +205,35 @@ export class Cloth {
     this.nt = tris.length / 3;
     this.triAlive = new Uint8Array(this.nt).fill(1);
     this.prev.set(this.pos);
+    this.reserve();
+  }
+
+  /** Grow every array to leave room for vertices and constraints created by tearing. */
+  private reserve() {
+    this.capP = this.n * 3;
+    this.capC = this.nc * 3;
+    const grow = <T extends Float32Array | Int32Array | Uint8Array | Uint32Array>(a: T, size: number): T => {
+      const b = new (a.constructor as new (n: number) => T)(size);
+      b.set(a);
+      return b;
+    };
+    this.pos = grow(this.pos, this.capP * 3);
+    this.prev = grow(this.prev, this.capP * 3);
+    this.vel = grow(this.vel, this.capP * 3);
+    this.invMass = grow(this.invMass, this.capP);
+    this.uv = grow(this.uv, this.capP * 2);
+    this.pinned = grow(this.pinned, this.capP);
+    this.strain = new Float32Array(this.capP);
+    this.ca = grow(this.ca, this.capC);
+    this.cb = grow(this.cb, this.capC);
+    this.rest = grow(this.rest, this.capC);
+    this.kind = grow(this.kind, this.capC);
+    this.alive = grow(this.alive, this.capC);
+    this.bendVia = grow(this.bendVia, this.capC * 2);
+    this.queued = new Uint8Array(this.capC);
+    this.weak = new Float32Array(this.capC);
+    // A little random variation per thread so rips wander instead of running on rails.
+    for (let c = 0; c < this.nc; c++) this.weak[c] = 0.9 + Math.random() * 0.2;
   }
 
   private dist(i: number, j: number) {
@@ -207,12 +247,23 @@ export class Cloth {
     this.tornThisFrame = 0;
     this.age += dt;
     this.applyWind(dt, t);
+    let budget = 24;
     for (let s = 0; s < substeps; s++) {
       this.integrate(h);
-      this.solve(h);
+      this.solve(h, s === substeps - 1);
+      this.attach();
+      while (this.pending.length && budget > 0) {
+        const c = this.pending.pop()!;
+        this.queued[c] = 0;
+        if (this.alive[c] && this.tear(c)) budget--;
+      }
+      this.pending.length = 0;
       this.collide();
       this.updateVelocities(h);
     }
+    // Crack tips heal back toward normal strength so old rips don't stay hair-trigger forever.
+    const heal = 1 - Math.exp(-dt * 0.8);
+    for (let c = 0; c < this.nc; c++) if (this.weak[c] < 0.9) this.weak[c] += (0.9 - this.weak[c]) * heal;
     this.stepBalls(dt);
     if (this.tornThisFrame) this.refreshTriangles();
   }
@@ -252,8 +303,12 @@ export class Cloth {
     }
   }
 
-  private solve(h: number) {
-    const { pos, invMass, ca, cb, rest, kind, alive, bendVia } = this;
+  private solve(h: number, last: boolean) {
+    const { pos, invMass, ca, cb, rest, kind, alive, bendVia, weak, strain } = this;
+    if (last) {
+      strain.fill(0, 0, this.n);
+      this.maxStrain = 0;
+    }
     const alphaStretch = this.cfg.stretchCompliance / (h * h);
     const alphaBend = (this.cfg.bendCompliance * 1e-3) / (h * h);
     const tear = this.age > 0.6 ? this.cfg.tear : 0;
@@ -279,10 +334,23 @@ export class Cloth {
       const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
       if (len < 1e-9) continue;
       const r0 = rest[c];
-      if (tear > 0 && k !== Kind.Bend && len > r0 * tear) {
-        alive[c] = 0;
-        this.tornThisFrame++;
-        continue;
+      if (k !== Kind.Bend) {
+        const st = len / r0 - 1;
+        if (last && st > 0) {
+          if (st > strain[i]) strain[i] = st;
+          if (st > strain[j]) strain[j] = st;
+          if (st > this.maxStrain) this.maxStrain = st;
+        }
+        if (tear > 0 && len > r0 * (1 + (tear - 1) * weak[c])) {
+          if (k === Kind.Shear) {
+            alive[c] = 0;
+            continue;
+          }
+          if (!this.queued[c]) {
+            this.queued[c] = 1;
+            this.pending.push(c);
+          }
+        }
       }
       const alpha = k === Kind.Bend ? alphaBend : alphaStretch;
       const lambda = -(len - r0) / (w + alpha);
@@ -403,6 +471,181 @@ export class Cloth {
     }
   }
 
+  /** Pull held patches toward their fingers; soft, so the load spreads into the fabric. */
+  private attach() {
+    const { pos } = this;
+    for (const hd of this.handles) {
+      for (let k = 0; k < hd.verts.length; k++) {
+        const o = hd.verts[k] * 3;
+        const f = hd.weights[k];
+        pos[o] += (hd.target[0] + hd.offsets[k * 3] - pos[o]) * f;
+        pos[o + 1] += (hd.target[1] + hd.offsets[k * 3 + 1] - pos[o + 1]) * f;
+        pos[o + 2] += (hd.target[2] + hd.offsets[k * 3 + 2] - pos[o + 2]) * f;
+      }
+    }
+  }
+
+  /**
+   * Tear thread c by splitting one endpoint across the plane perpendicular to the thread
+   * (cutting by vertex splitting): the crack opens across the pull, which relieves the tension
+   * and leaves clean edges instead of holes.
+   */
+  tear(c: number): boolean {
+    const a = this.ca[c];
+    const b = this.cb[c];
+    const p = this.pos;
+    let dx = p[b * 3] - p[a * 3], dy = p[b * 3 + 1] - p[a * 3 + 1], dz = p[b * 3 + 2] - p[a * 3 + 2];
+    const dl = Math.hypot(dx, dy, dz) || 1;
+    dx /= dl;
+    dy /= dl;
+    dz /= dl;
+    // Split the more strained free endpoint; the plane normal points from it toward the other end.
+    const aFree = !this.pinned[a] && this.invMass[a] > 0;
+    const bFree = !this.pinned[b] && this.invMass[b] > 0;
+    let v = a;
+    let sx = dx, sy = dy, sz = dz;
+    if (!aFree || (bFree && this.strain[b] > this.strain[a])) {
+      v = b;
+      sx = -dx;
+      sy = -dy;
+      sz = -dz;
+    }
+    const w = this.split(v, sx, sy, sz);
+    if (!w) {
+      this.alive[c] = 0;
+      this.tornThisFrame++;
+      this.refreshTriangles();
+      return true;
+    }
+    // The threads at the crack tip that carry the same pull are the next to go: the rip runs.
+    for (let k = 0; k < this.nc; k++) {
+      if (!this.alive[k] || this.kind[k] === Kind.Bend) continue;
+      const i = this.ca[k], j = this.cb[k];
+      if (i !== v && j !== v && i !== w && j !== w) continue;
+      const ex = p[j * 3] - p[i * 3], ey = p[j * 3 + 1] - p[i * 3 + 1], ez = p[j * 3 + 2] - p[i * 3 + 2];
+      const el = Math.hypot(ex, ey, ez) || 1;
+      if (Math.abs((ex * dx + ey * dy + ez * dz) / el) > 0.6) this.weak[k] = Math.min(this.weak[k], 0.7);
+    }
+    this.tornThisFrame++;
+    this.topology++;
+    return true;
+  }
+
+  /** Scissor cut: each end of the thread keeps the triangles on its own side of the blade plane. */
+  private slice(c: number, plane: [number, number, number, number]) {
+    const p = this.pos;
+    const [nx, ny, nz, d] = plane;
+    let did = false;
+    for (const v of [this.ca[c], this.cb[c]]) {
+      if (this.pinned[v] || this.invMass[v] === 0) continue;
+      const sv = p[v * 3] * nx + p[v * 3 + 1] * ny + p[v * 3 + 2] * nz + d > 0 ? 1 : -1;
+      if (this.split(v, -sv * nx, -sv * ny, -sv * nz, -sv * d)) did = true;
+    }
+    if (did) {
+      this.tornThisFrame++;
+      this.topology++;
+    } else {
+      this.alive[c] = 0;
+      this.refreshTriangles();
+    }
+  }
+
+  private triNormal(t: number): [number, number, number] {
+    const p = this.pos;
+    const a = this.tris[t * 3] * 3, b = this.tris[t * 3 + 1] * 3, c = this.tris[t * 3 + 2] * 3;
+    const e1x = p[b] - p[a], e1y = p[b + 1] - p[a + 1], e1z = p[b + 2] - p[a + 2];
+    const e2x = p[c] - p[a], e2y = p[c + 1] - p[a + 1], e2z = p[c + 2] - p[a + 2];
+    const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    return [nx / l, ny / l, nz / l];
+  }
+
+  /** Duplicate vertex v and move the triangles on t2's side of the cut plane to the copy. Returns the new index or 0. */
+  /** `off` given: the plane is dot(x, n) + off = 0 in world space; otherwise it passes through v. */
+  private split(v: number, cx: number, cy: number, cz: number, off?: number): number {
+    if (this.pinned[v] || this.invMass[v] === 0 || this.n >= this.capP) return 0;
+    const p = this.pos;
+    const vx = p[v * 3], vy = p[v * 3 + 1], vz = p[v * 3 + 2];
+    const sideOf = (x: number, y: number, z: number) =>
+      (off === undefined ? (x - vx) * cx + (y - vy) * cy + (z - vz) * cz : x * cx + y * cy + z * cz + off) > 0 ? 1 : -1;
+    const side = (t: number) => {
+      const a = this.tris[t * 3] * 3, b = this.tris[t * 3 + 1] * 3, c = this.tris[t * 3 + 2] * 3;
+      return sideOf((p[a] + p[b] + p[c]) / 3, (p[a + 1] + p[b + 1] + p[c + 1]) / 3, (p[a + 2] + p[b + 2] + p[c + 2]) / 3);
+    };
+    const fan: number[] = [];
+    for (let t = 0; t < this.nt; t++) {
+      if (!this.triAlive[t]) continue;
+      const o = t * 3;
+      if (this.tris[o] === v || this.tris[o + 1] === v || this.tris[o + 2] === v) fan.push(t);
+    }
+    const s2 = 1;
+    const moving = new Set(fan.filter((t) => side(t) === s2));
+    if (moving.size === fan.length || moving.size === 0) return 0;
+
+    // New vertex, identical to v.
+    const w = this.n++;
+    for (let k = 0; k < 3; k++) {
+      p[w * 3 + k] = p[v * 3 + k];
+      this.prev[w * 3 + k] = this.prev[v * 3 + k];
+      this.vel[w * 3 + k] = this.vel[v * 3 + k];
+    }
+    this.invMass[w] = this.invMass[v];
+    this.uv[w * 2] = this.uv[v * 2];
+    this.uv[w * 2 + 1] = this.uv[v * 2 + 1];
+    for (const t of moving) for (let k = 0; k < 3; k++) if (this.tris[t * 3 + k] === v) this.tris[t * 3 + k] = w;
+
+    // Which side uses each triangle edge at v.
+    const use = new Map<number, number>(); // 1 = moving side, 2 = staying side, 3 = both
+    for (const t of fan) {
+      const bit = moving.has(t) ? 1 : 2;
+      for (let k = 0; k < 3; k++) {
+        const e = this.triEdges[t * 3 + k];
+        if (this.ca[e] === v || this.cb[e] === v) use.set(e, (use.get(e) ?? 0) | bit);
+      }
+    }
+    const touched = new Set<number>();
+    const reassign = (e: number) => {
+      if (this.ca[e] === v) this.ca[e] = w;
+      else this.cb[e] = w;
+      touched.add(e);
+    };
+    for (const [e, u] of use) {
+      if (u === 1) reassign(e);
+      else if (u === 3 && this.nc < this.capC) {
+        // Edge shared across the cut: each side keeps its own copy.
+        const e2 = this.nc++;
+        this.ca[e2] = this.ca[e] === v ? w : this.ca[e];
+        this.cb[e2] = this.cb[e] === v ? w : this.cb[e];
+        this.rest[e2] = this.rest[e];
+        this.kind[e2] = this.kind[e];
+        this.alive[e2] = 1;
+        this.weak[e2] = this.weak[e];
+        this.bendVia[e2 * 2] = this.bendVia[e2 * 2 + 1] = -1;
+        for (const t of moving) for (let k = 0; k < 3; k++) if (this.triEdges[t * 3 + k] === e) this.triEdges[t * 3 + k] = e2;
+        touched.add(e);
+      }
+    }
+    // Loose shear diagonals follow whichever side their far end is on; bends through v give up.
+    for (let e = 0; e < this.nc; e++) {
+      if (!this.alive[e] || use.has(e)) continue;
+      if (this.ca[e] !== v && this.cb[e] !== v) continue;
+      if (this.kind[e] === Kind.Bend) {
+        this.alive[e] = 0;
+        continue;
+      }
+      if (this.kind[e] === Kind.Shear) {
+        const x = this.ca[e] === v ? this.cb[e] : this.ca[e];
+        if (sideOf(p[x * 3], p[x * 3 + 1], p[x * 3 + 2]) === s2) reassign(e);
+      }
+    }
+    // Bends that bridged the new crack would hold it shut.
+    for (let e = 0; e < this.nc; e++) {
+      if (this.kind[e] !== Kind.Bend || !this.alive[e]) continue;
+      if (touched.has(this.bendVia[e * 2]) || touched.has(this.bendVia[e * 2 + 1])) this.alive[e] = 0;
+    }
+    return w;
+  }
+
   private stepBalls(dt: number) {
     for (const b of this.balls) b.age += dt;
     // Keep the scene light: old balls leave.
@@ -422,26 +665,40 @@ export class Cloth {
     if (changed) this.topology++;
   }
 
-  /** Cuts every tearable constraint whose screen-space projection crosses the segment. */
-  cut(project: (x: number, y: number, z: number) => [number, number], ax: number, ay: number, bx: number, by: number) {
+  /** Cuts every tearable thread whose screen-space projection crosses the segment. */
+  cut(
+    project: (x: number, y: number, z: number) => [number, number],
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    plane?: [number, number, number, number],
+  ) {
     const { pos, ca, cb, alive, kind } = this;
     let cutCount = 0;
-    const cache = new Float32Array(this.n * 2);
-    for (let i = 0; i < this.n; i++) {
+    const n0 = this.n;
+    const cache = new Float32Array(n0 * 2);
+    for (let i = 0; i < n0; i++) {
       const [sx, sy] = project(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
       cache[i * 2] = sx;
       cache[i * 2 + 1] = sy;
     }
-    for (let c = 0; c < this.nc; c++) {
+    const hits: number[] = [];
+    const nc0 = this.nc;
+    for (let c = 0; c < nc0; c++) {
       if (!alive[c] || kind[c] === Kind.Bend) continue;
       const i = ca[c];
       const j = cb[c];
-      if (segmentsCross(ax, ay, bx, by, cache[i * 2], cache[i * 2 + 1], cache[j * 2], cache[j * 2 + 1])) {
-        alive[c] = 0;
-        cutCount++;
-      }
+      if (i >= n0 || j >= n0) continue;
+      if (segmentsCross(ax, ay, bx, by, cache[i * 2], cache[i * 2 + 1], cache[j * 2], cache[j * 2 + 1])) hits.push(c);
     }
-    if (cutCount) this.refreshTriangles();
+    for (const c of hits.slice(0, 60)) {
+      if (!alive[c]) continue;
+      if (kind[c] === Kind.Shear) alive[c] = 0;
+      else if (plane) this.slice(c, plane);
+      else this.tear(c);
+      cutCount++;
+    }
     return cutCount;
   }
 }

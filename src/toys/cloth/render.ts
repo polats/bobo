@@ -9,6 +9,7 @@ precision highp float;
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUv;
+layout(location = 3) in float aStrain;
 uniform mat4 viewProj;
 uniform float shadow;      // 1 = project onto the shadow plane
 uniform vec4 plane;        // shadow receiver: dot(n, p) + d = 0
@@ -16,8 +17,10 @@ uniform vec3 lightDir;     // direction light travels
 out vec3 vPos;
 out vec3 vNormal;
 out vec2 vUv;
+out float vStrain;
 void main() {
   vec3 p = aPos;
+  vStrain = aStrain;
   if (shadow > 0.5) {
     float t = (dot(plane.xyz, p) + plane.w) / dot(plane.xyz, lightDir);
     p = p - lightDir * t + plane.xyz * 0.002;
@@ -33,6 +36,7 @@ precision highp float;
 in vec3 vPos;
 in vec3 vNormal;
 in vec2 vUv;
+in float vStrain;
 uniform vec3 eye;
 uniform vec3 lightDir;
 uniform float shadow;
@@ -78,7 +82,10 @@ void main() {
   if (!front) base = mix(base, vec3(0.85, 0.8, 0.72), 0.55) * 0.85; // lighter lining on the back
   // Woven threads: tiny brightness ripple that sells the fabric scale.
   vec2 w = sin(vUv * threads * 6.2831);
-  base *= 0.9 + 0.1 * (w.x * w.y);
+  // Stress whitening: strained fabric pales and its weave opens up just before it gives.
+  float st = smoothstep(0.03, 0.3, vStrain);
+  base *= 0.9 + (0.1 + 0.5 * st) * (w.x * w.y);
+  base = mix(base, vec3(0.95, 0.9, 0.82), st * 0.45);
   float wrap = 0.35;
   float diff = clamp((dot(n, L) + wrap) / (1.0 + wrap), 0.0, 1.0);
   float nv = abs(dot(n, v));
@@ -211,6 +218,8 @@ export class ClothRenderer {
   private uvBuf: WebGLBuffer;
   private idxBuf: WebGLBuffer;
   private idxCount = 0;
+  private strainBuf: WebGLBuffer;
+  private uploadedN = 0;
   private topology = -1;
   private normals: Float32Array;
   private roomVao: WebGLVertexArrayObject;
@@ -229,12 +238,13 @@ export class ClothRenderer {
     this.ball = new Program(gl, compile(gl, gl.VERTEX_SHADER, ballVert), ballFrag);
     this.trail = new Program(gl, compile(gl, gl.VERTEX_SHADER, trailVert), trailFrag);
 
-    this.normals = new Float32Array(sim.n * 3);
+    this.normals = new Float32Array(sim.pos.length);
     this.vao = gl.createVertexArray()!;
     gl.bindVertexArray(this.vao);
     this.posBuf = this.attrib(0, 3, sim.pos, gl.DYNAMIC_DRAW);
     this.nrmBuf = this.attrib(1, 3, this.normals, gl.DYNAMIC_DRAW);
-    this.uvBuf = this.attrib(2, 2, sim.uv, gl.STATIC_DRAW);
+    this.uvBuf = this.attrib(2, 2, sim.uv, gl.DYNAMIC_DRAW);
+    this.strainBuf = this.attrib(3, 1, sim.strain, gl.DYNAMIC_DRAW);
     this.idxBuf = gl.createBuffer()!;
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.idxBuf);
 
@@ -320,10 +330,19 @@ export class ClothRenderer {
         nrm[v + 2] += nz;
       }
     }
+    const n = s.n;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuf);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, s.pos);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, s.pos.subarray(0, n * 3));
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nrmBuf);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, nrm);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, nrm.subarray(0, n * 3));
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.strainBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, s.strain.subarray(0, n));
+    // Tearing adds vertices; they need their texture coordinates too.
+    if (n !== this.uploadedN) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuf);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, s.uv.subarray(0, n * 2));
+      this.uploadedN = n;
+    }
   }
 
   draw(width: number, height: number, view: Mat4, proj: Mat4, viewProj: Mat4, eye: Vec3, fabric: Fabric, trail: TrailPoint[]) {
