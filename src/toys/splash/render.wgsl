@@ -30,7 +30,10 @@ fn spriteVS(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) ->
   out.corner = corner;
   out.viewCenter = vc;
   let speed = length(p.vel);
-  out.foam = smoothstep(P.foamThreshold, P.foamThreshold * 2.2, speed);
+  // Only about a third of particles carry foam, so a violent splash breaks into white flecks and
+  // crests instead of turning the whole tank milky.
+  let h = fract(sin(f32(ii) * 12.9898) * 43758.5453);
+  out.foam = select(0.0, smoothstep(P.foamThreshold * 1.2, P.foamThreshold * 2.6, speed), h < 0.35);
   return out;
 }
 
@@ -330,13 +333,17 @@ fn compositeFS(in: QuadOut) -> @location(0) vec4f {
     let deep = vec3f(0.02, 0.18, 0.32);
     var water = refrColor * trans + deep * (1.0 - trans) * 0.6;
     let cosT = clamp(dot(n, -rd), 0.0, 1.0);
-    let fresnel = 0.02 + 0.98 * pow(1.0 - cosT, 5.0);
+    // Thin, scattered spray has unreliable normals: damp its reflections so a splash stays
+    // clear instead of glazing over with a white sheen.
+    let solid = smoothstep(0.6, 3.5, t);
+    let fresnel = (0.02 + 0.98 * pow(1.0 - cosT, 5.0)) * mix(0.25, 1.0, solid);
     water = mix(water, envColor(reflect(rd, n)), fresnel);
     let L = normalize(P.lightDir);
     let spec = pow(max(dot(reflect(rd, n), L), 0.0), 120.0);
-    water += vec3f(spec * 1.6);
-    // Thin sheets fade in so spray edges don't look cut out.
-    let alpha = smoothstep(0.0, 1.2, t);
+    water += vec3f(spec * 1.6 * mix(0.3, 1.0, solid));
+    // Thin sheets fade in so spray edges don't look cut out; lone surface sprites (whose normals are
+    // noisy) stay nearly invisible, which removes the dark speckle along the rim.
+    let alpha = smoothstep(0.25, 1.6, t);
     // A beach ball nearer than the water surface stays on top.
     var ballFront = false;
     for (var i = 0u; i < P.ballCount; i++) {
@@ -352,8 +359,11 @@ fn compositeFS(in: QuadOut) -> @location(0) vec4f {
   // Foam and spray: the fraction of fast-moving water along the ray, so a deep splash reads as
   // white crests rather than a fog through the whole tank. Loose spray (thin) still shows.
   let foamFrac = clamp(thick.g * 2.0 * P.radius * P.thickScale / max(thick.r, 1e-3), 0.0, 1.0);
-  let foamAmt = foamFrac * smoothstep(0.05, 0.6, thick.r) * 0.55;
-  col = mix(col, vec3f(0.92, 0.97, 1.0), foamAmt);
+  // Sharp threshold (flecks, not haze), and foam buried under a lot of water fades: it reads as
+  // surface crests and airborne spray.
+  let buried = exp(-max(thick.r - 4.0, 0.0) * 0.18);
+  let foamAmt = smoothstep(0.12, 0.45, foamFrac) * smoothstep(0.05, 0.5, thick.r) * buried * 0.6;
+  col = mix(col, vec3f(0.94, 0.98, 1.0), foamAmt);
 
   // Glass: faint sheen on the front pane plus bright edges.
   let lo = P.tankMin - vec3f(0.35);

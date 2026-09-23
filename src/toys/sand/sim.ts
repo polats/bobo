@@ -80,6 +80,10 @@ export class Sim {
   wrap = false;
   /** Explosions this step, so the host can flash, shake and buzz. */
   booms = 0;
+  /** Largest blast radius this step (cells), for scaling the flash. */
+  boomSize = 0;
+  /** Gunpowder cells lit by a blast, detonated next step: a crackling chain that also runs underwater. */
+  private fuse: number[] = [];
 
   constructor(w: number, h: number) {
     this.w = w;
@@ -138,6 +142,7 @@ export class Sim {
   clear() {
     this.mat.fill(0);
     this.life.fill(0);
+    this.fuse.length = 0;
   }
 
   count() {
@@ -164,6 +169,11 @@ export class Sim {
   step() {
     this.tick = this.tick === 65535 ? 1 : this.tick + 1;
     this.booms = 0;
+    this.boomSize = 0;
+    if (this.fuse.length) {
+      const lit = this.fuse.splice(0, Math.min(this.fuse.length, 48));
+      for (const j of lit) if (this.mat[j] === POWDER) this.explode(j % this.w, (j / this.w) | 0);
+    }
     const { w, h, mat, stamp, tick } = this;
     const ltr = (tick & 1) === 0;
     for (let y = 0; y < h; y++) {
@@ -344,25 +354,61 @@ export class Sim {
 
   explode(cx: number, cy: number) {
     this.booms++;
-    const r = this.randInt(4, 7);
+    const r = this.randInt(6, 10);
+    this.boomSize = Math.max(this.boomSize, r);
+    const r2 = r * r;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         const d2 = dx * dx + dy * dy;
-        if (d2 > r * r) continue;
+        if (d2 > r2) continue;
         const j = this.at(cx + dx, cy + dy);
         if (j < 0) continue;
         const t = this.mat[j];
         if (t === WALL) continue;
         if (t === POWDER && d2 > 1) {
           // Neighbouring powder goes off next step: a crackling chain, not one giant pop.
-          this.set(j, FIRE, this.randInt(2, 6));
+          this.fuse.push(j);
           continue;
         }
         if (t === ROCK && this.chance(0.6)) continue;
+        // Water in the blast flashes to steam instead of catching fire.
+        if (t === WATER || t === ICE) {
+          if (this.chance(0.6)) this.set(j, STEAM);
+          this.stamp[j] = this.tick;
+          continue;
+        }
         if (d2 > (r - 1) * (r - 1) && this.chance(0.35)) this.set(j, EMBER);
-        else if (this.chance(0.75)) this.set(j, FIRE, this.randInt(6, 22));
+        else if (d2 < r2 * 0.45 || this.chance(0.6)) this.set(j, FIRE, this.randInt(6, 22));
         else this.set(j, SMOKE);
         this.stamp[j] = this.tick;
+      }
+    }
+    this.shockwave(cx, cy, r);
+  }
+
+  /** Throws loose powders and liquids outward from a blast, up to a few cells, into empty space. */
+  private shockwave(cx: number, cy: number, r: number) {
+    const R = r * 2;
+    for (let dy = -R; dy <= R; dy++) {
+      for (let dx = -R; dx <= R; dx++) {
+        const d2 = dx * dx + dy * dy;
+        if (d2 <= r * r || d2 > R * R) continue;
+        const j = this.at(cx + dx, cy + dy);
+        if (j < 0) continue;
+        const k = KIND[this.mat[j]];
+        if (k !== GRAIN && k !== LIQUID) continue;
+        const d = Math.sqrt(d2);
+        // Push hardest near the blast; bias upward so debris arcs rather than just sliding.
+        const push = Math.round((1 - (d - r) / (R - r)) * 4) + 1;
+        const ux = dx / d;
+        const uy = dy / d + 0.35;
+        let target = -1;
+        for (let s = 1; s <= push; s++) {
+          const t = this.at(cx + dx + Math.round(ux * s), cy + dy + Math.round(uy * s));
+          if (t < 0 || this.mat[t] !== EMPTY) break;
+          target = t;
+        }
+        if (target >= 0) this.swap(j, target);
       }
     }
   }
@@ -435,14 +481,27 @@ export class Sim {
   }
 
   private lava(i: number, x: number, y: number) {
+    // Molten rock sets off gunpowder it touches, even wet powder at the bottom of a pool.
+    for (let k = 0; k < 8; k++) {
+      const j = this.at(x + NX[k], y + NY[k]);
+      if (j >= 0 && this.mat[j] === POWDER) {
+        this.explode(j % this.w, (j / this.w) | 0);
+        return;
+      }
+    }
     for (let n = 0; n < 2; n++) {
       const j = this.randomNeighbour(x, y);
       if (j < 0) continue;
       const t = this.mat[j];
       if (t === WATER) {
-        this.set(i, ROCK);
-        this.set(j, STEAM);
-        return;
+        // Hardens over a few steps rather than instantly, so lava can sink through a pool.
+        if (this.chance(0.07)) {
+          this.set(i, ROCK);
+          this.set(j, STEAM);
+          return;
+        }
+        if (this.chance(0.25)) this.set(j, STEAM);
+        continue;
       }
       if (t === ICE) this.set(j, WATER);
       else if (FLAMMABLE[t] && this.chance(0.5)) this.ignite(j);
@@ -452,14 +511,21 @@ export class Sim {
       if (this.chance(0.003)) this.set(up, EMBER);
       else if (this.chance(0.004)) this.set(up, SMOKE);
     }
-    // Lava is thick: it only flows some of the time.
-    if (this.chance(0.35)) this.liquid(i, x, y);
+    // Lava is thick: it only flows some of the time, but it drops straight through water.
+    const below = this.at(x, y - 1);
+    if (below >= 0 && this.mat[below] === WATER) this.swap(i, below);
+    else if (this.chance(0.35)) this.liquid(i, x, y);
   }
 
   private acid(i: number, x: number, y: number) {
     const j = this.randomNeighbour(x, y);
     if (j >= 0) {
       const t = this.mat[j];
+      // Acid slowly spends itself: faster against stone it can't eat, so floor puddles fizzle away.
+      if ((t === WALL && this.chance(0.006)) || this.chance(0.001)) {
+        this.set(i, this.chance(0.5) ? SMOKE : STEAM);
+        return;
+      }
       const eats = t !== EMPTY && t !== WALL && t !== ACID && KIND[t] !== GAS && (t !== ROCK || this.chance(0.15));
       if (eats && this.chance(0.3)) {
         if (this.chance(0.3)) this.set(j, SMOKE);

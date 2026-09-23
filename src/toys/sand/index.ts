@@ -97,7 +97,7 @@ class Alchemy implements ToyInstance {
     const X = (f: number) => Math.round(f * (w - 1));
     const Y = (f: number) => Math.round(f * (h - 1));
     // Thick stone floor so the scene sits above the material dock.
-    const g = Y(0.075);
+    const g = Y(0.135);
     s.rect(0, 0, w - 1, g, M.WALL);
     // Bowl of water with a slick of oil and plants creeping in from the rim.
     const bx0 = X(0.34);
@@ -133,8 +133,9 @@ class Alchemy implements ToyInstance {
   }
 
   private buildDock() {
+    injectDockStyle();
     const dock = document.createElement('div');
-    dock.className = 'dock';
+    dock.className = 'dock sand-dock';
     const buttons = TOOLS.map((t) => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -143,7 +144,6 @@ class Alchemy implements ToyInstance {
       b.setAttribute('aria-label', t.label);
       b.title = t.label;
       b.style.setProperty('--swatch', t.swatch);
-      b.style.fontSize = '17px';
       b.setAttribute('aria-pressed', String(t.id === this.tool));
       b.addEventListener('click', () => {
         this.tool = t.id;
@@ -208,8 +208,8 @@ class Alchemy implements ToyInstance {
     }
     this.simMs += (performance.now() - t0 - this.simMs) * 0.1;
     if (booms > 0) {
-      this.flash = Math.min(0.5, this.flash + 0.12 * booms);
-      this.shake = Math.min(0.35, this.shake + 0.08 * booms);
+      this.flash = Math.min(0.75, this.flash + 0.2 * booms);
+      this.shake = Math.min(0.6, this.shake + 0.14 * booms);
       this.ctx.haptic(booms > 2 ? 'heavy' : 'medium');
     }
     this.flash *= Math.exp(-dt * 9);
@@ -245,4 +245,32 @@ class Alchemy implements ToyInstance {
     this.dock.remove();
     this.renderer.destroy();
   }
+}
+
+/** Thirteen tools don't fit one row on a phone: wrap them into a compact two-row tray. */
+function injectDockStyle() {
+  if (document.getElementById('sand-dock-style')) return;
+  const st = document.createElement('style');
+  st.id = 'sand-dock-style';
+  st.textContent = `
+.dock.sand-dock {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border-radius: 22px;
+  width: max-content;
+  max-width: min(330px, calc(100vw - 24px));
+  overflow: visible;
+}
+.dock.sand-dock button.swatch {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  font-size: 17px;
+  opacity: 0.75;
+}
+.dock.sand-dock button.swatch[aria-pressed="true"] { opacity: 1; transform: scale(1.08); }
+`;
+  document.head.appendChild(st);
 }
