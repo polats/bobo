@@ -107,16 +107,18 @@ function mountToy(toy: Toy): () => void {
   ro.observe(stage);
   resize();
 
+  console.log(`[bobo] creating ${toy.id}`);
   toy
     .create({ canvas, overlay, panel, pointers, pixelRatio, setStatus: (s) => (status = s), haptic })
     .then((inst) => {
       if (!alive) return inst.destroy();
       instance = inst;
+      console.log(`[bobo] started ${toy.id}`);
       resize();
       start();
     })
     .catch((err) => {
-      console.error(err);
+      console.error(`[bobo] ${toy.id} could not start: ${err instanceof Error ? err.message : err}`);
       const n = document.createElement('div');
       n.className = 'notice';
       n.textContent = `${toy.title} could not start: ${err instanceof Error ? err.message : err}`;
@@ -129,6 +131,7 @@ function mountToy(toy: Toy): () => void {
     let acc = 0;
     let frames = 0;
     let worst = 0;
+    let lastLog = last;
     const loop = (now: number) => {
       raf = requestAnimationFrame(loop);
       const raw = (now - last) / 1000;
@@ -141,7 +144,8 @@ function mountToy(toy: Toy): () => void {
       frames++;
       worst = Math.max(worst, raw);
       if (acc >= 0.5) {
-        if (window.boboAutoplay && Math.floor((now - t0) / 5000) !== Math.floor((now - t0 - raw * 1000) / 5000)) {
+        if (window.boboAutoplay && now - lastLog > 5000) {
+          lastLog = now;
           console.log(`[bobo] ${toy.id} ${Math.round(frames / acc)} fps worst ${Math.round(worst * 1000)}ms ${status}`);
         }
         fps.textContent = `${Math.round(frames / acc)} fps · worst ${Math.round(worst * 1000)}ms${status ? '\n' + status : ''}`;
@@ -210,6 +214,10 @@ declare global {
     boboAutoplay?: boolean;
   }
 }
+
+// Surface uncaught errors in the native console (Capacitor forwards console.* to the device log).
+addEventListener('error', (e) => console.error(`[bobo] uncaught: ${e.message} @ ${e.filename}:${e.lineno}`));
+addEventListener('unhandledrejection', (e) => console.error(`[bobo] unhandled rejection: ${e.reason}`));
 
 addEventListener('hashchange', route);
 if (window.boboStartToy && !location.hash) location.hash = window.boboStartToy;
