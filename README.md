@@ -8,8 +8,10 @@ A physics sandbox for playing with novel, satisfying, performant simulations —
 |---|---|---|
 | **Ink Swirl** | Finger-paint glowing fluid; tap to burst, flick to swirl. *Paint* mode mixes colours like real pigment. | Stable Fluids on WebGL2 (`src/toys/ink`) |
 | **Goo Lab** | Pour water, jelly, snow and sand that all interact; poke and squish them. | 2D MLS-MPM on WebGPU compute (`src/toys/goo`) |
+| **Alchemy Sandbox** | Falling-sand chemistry: fire, water, lava, acid, plants, ice, gunpowder and more react with each other. | Cellular automaton on CPU + WebGL2 glow (`src/toys/sand`) |
+| **Ripple Pool** | Poke a sunlit pool, watch caustics dance, grab and fling rubber ducks, make it rain. | Height-field waves + mesh caustics on WebGL2 (`src/toys/pool`) |
 
-Every toy has a **Tune** panel (top right) with live sliders, a **Based on** list linking the papers and reference code it uses, and an FPS readout (bottom left).
+Every toy has a **Tune** panel (top right) with live sliders, a **Based on** list linking the papers and reference code it uses, and an FPS readout (top centre).
 
 Play it: https://bobo-ashy-ten.vercel.app (redeploys on every push to `main`).
 
@@ -19,8 +21,6 @@ Next toys from the backlog in [docs/research/physics.md](docs/research/physics.m
 
 | Toy | Sim | Papers / sources |
 |---|---|---|
-| **Alchemy Sandbox** — falling sand with fire, water, acid, lava, plants, steam | Cellular automata (Margolus blocks on GPU) | [Noita GDC 2019 talk](https://www.youtube.com/watch?v=prXuyMCgbTc) · [Sandspiel](https://github.com/MaxBittker/sandspiel) · [GPU-Falling-Sand-CA](https://github.com/GelamiSalami/GPU-Falling-Sand-CA) · [GPU falling sand blog](https://meatbatgames.com/blog/falling-sand-gpu/) |
-| **Ripple Pool** — caustic-lit pool, rubber ducks, rain | Height-field waves | [evanw/webgl-water](https://github.com/evanw/webgl-water) · [Ten Minute Physics #20](https://matthias-research.github.io/pages/tenMinutePhysics/index.html) · [Jeschke & Wojtan 2023, dispersive shallow water](https://research.nvidia.com/publication/2023-08_generalizing-shallow-water-simulations-dispersive-surface-waves) · [2MP: Dispersion Kernels](https://www.youtube.com/watch?v=FeMSEaHR8aw) |
 | **Splash Tank** — tilt the phone to slosh 3D water | 3D MLS-MPM (reuses Goo Lab) + screen-space fluid rendering | [Hu et al. 2018](https://yuanming.taichi.graphics/publication/2018-mlsmpm/) · [van der Laan et al. 2009, SSFR](https://dl.acm.org/doi/10.1145/1507149.1507164) · [WebGPU-Ocean](https://github.com/matsuoka-601/webgpu-ocean) · [Codrops write-up](https://tympanus.net/codrops/2025/02/26/webgpu-fluid-simulations-high-performance-real-time-rendering/) |
 | **Tear Sheet** — cloth you slash; ropes and chains | XPBD | [Müller et al. 2007, PBD](https://matthias-research.github.io/pages/publications/posBasedDyn.pdf) · [Macklin et al. 2016, XPBD](https://dl.acm.org/doi/10.1145/2994258.2994272) · Ten Minute Physics #14/#15 · [WebGPU XPBD cloth](https://github.com/ccincotti3/webgpu_cloth_simulator) |
 | **Jelly Stack** — wobbly blocks to stack and slap | Shape matching / XPBD (2D), VBD later | [Müller et al. 2005, shape matching](https://dl.acm.org/doi/10.1145/1073204.1073216) · [Vertex Block Descent 2024](https://graphics.cs.utah.edu/research/projects/vbd/) · [2MP: Complementary Dynamics](https://www.youtube.com/watch?v=s8Nm_ytwO6w) |
@@ -35,7 +35,7 @@ npm install
 npm run dev        # http://localhost:5280, also on your LAN IP for phones on the same Wi-Fi
 ```
 
-Goo Lab needs WebGPU: current Chrome/Edge, Safari 26+ (iOS/iPadOS/macOS 26). Ink Swirl runs anywhere with WebGL2.
+Goo Lab needs WebGPU: current Chrome/Edge, Safari 26+ (iOS/iPadOS/macOS 26). The other toys run anywhere with WebGL2.
 
 ## iPhone
 
