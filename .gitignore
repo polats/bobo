@@ -6,3 +6,6 @@ mobile/out/
 .scratch/
 .vercel
 .env*
+tools/media/frames/
+tools/media/out/
+tools/media/overlay.png

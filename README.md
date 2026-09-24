@@ -1,5 +1,7 @@
 # bobo
 
+![bobo — physics toys you can poke](docs/media/bobo-cover.gif)
+
 A physics sandbox for playing with novel, satisfying, performant simulations — liquid, particles, cloth, soft bodies, sand — tuned for juicy visual effects.
 
 ## Toys
@@ -18,6 +20,15 @@ A physics sandbox for playing with novel, satisfying, performant simulations —
 Every toy has a **Tune** panel (top right) with live sliders, a **Based on** list linking the papers and reference code it uses, and an FPS readout (top centre).
 
 Play it: https://bobo-ashy-ten.vercel.app (redeploys on every push to `main`).
+
+## Gallery
+
+| | | | |
+|:-:|:-:|:-:|:-:|
+| ![Ink Swirl](docs/media/ink.gif)<br>**Ink Swirl** | ![Goo Lab](docs/media/goo.gif)<br>**Goo Lab** | ![Alchemy Sandbox](docs/media/sand.gif)<br>**Alchemy Sandbox** | ![Ripple Pool](docs/media/pool.gif)<br>**Ripple Pool** |
+| ![Splash Tank](docs/media/splash.gif)<br>**Splash Tank** | ![Tear Sheet](docs/media/cloth.gif)<br>**Tear Sheet** | ![Laundry Line](docs/media/laundry.gif)<br>**Laundry Line** | ![Pull the Thread](docs/media/thread.gif)<br>**Pull the Thread** |
+
+Captured in headless Chrome with [`tools/media`](tools/media).
 
 ## Roadmap
 
