@@ -36,10 +36,15 @@ Captured in headless Chrome with [`tools/media`](tools/media).
 
 ## Roadmap
 
-Next toys from the backlog in [docs/research/physics.md](docs/research/physics.md#6-toy-backlog-prioritized), with the work each one builds on:
+Next up, from [docs/research/cloth-knitting.md](docs/research/cloth-knitting.md) and [docs/research/shear-knit.md](docs/research/shear-knit.md):
 
-| Toy | Sim | Papers / sources |
+| Next | What | Builds on |
 |---|---|---|
+| **Sound + haptics layer** | Shared Web Audio engine (grains, procedural motors, modal clicks) and a native Core Haptics bridge for continuous, load-driven vibration; retrofit every toy | [shear-knit.md §2, §5](docs/research/shear-knit.md) · [Core Haptics](https://developer.apple.com/documentation/corehaptics) |
+| **Shear** | Clip the fleece off a sheep with shell fur and cut maps; the fleece peels off in one piece | Tear Sheet cutting, Laundry Line pins · [Lengyel et al. 2001](https://hhoppe.com/proj/fur/) |
+| **Rope & yarn ball** | Ropes, chains and a yarn ball that unspools and tangles as a cat bats it | Pull the Thread's yarn · [Cosserat rods](https://animation.rwth-aachen.de/publication/0550/) |
+| **Knit-a-Scarf** | Knit stitch by stitch from your own spun yarn, then dress the sheep | Pull the Thread's knit grid · [Stitch Meshes](https://www.cemyuksel.com/research/stitchmeshes/) |
+| **Tablecloth Trick** | Yank a tablecloth out from under a dinner set | Tear Sheet cloth + Demolition's rigid bodies · [C-IPC](https://ipc-sim.github.io/C-IPC/) |
 
 ## Run
 
