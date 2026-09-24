@@ -17,6 +17,7 @@ A physics sandbox for playing with novel, satisfying, performant simulations —
 | **Pull the Thread** | Grab the loose end of a chunky knit and unravel it stitch by stitch, row by row, into a pile of crinkly yarn. | Stitch grid over XPBD cloth + XPBD yarn strand on WebGL2 (`src/toys/thread`) |
 | **Campfire** | Stack logs, strike a match, blow on the embers; fire climbs the wood, chars it, and hisses when doused. | Stable-fluids fire (heat, smoke, buoyancy) + CPU burning cells on WebGL2 (`src/toys/fire`) |
 | **Demolition Tower** | Swing a wrecking ball, drop bombs or flick cannonballs into brick towers, pyramids and castles; blocks shatter into debris and dust. | Pure-TS 2D rigid bodies (Box2D v3-style soft step, sleeping) + WebGL2 (`src/toys/demolition`) |
+| **Ferro Blob** | Drag a magnet under a dish of black ferrofluid: it crawls after you and bristles with spikes; two fingers split it, taps drop droplets. | Double-density particle liquid + Rosensweig spike lattice + chrome shading on WebGL2 (`src/toys/ferro`) |
 | **Laundry Line** | Washing pegged to a sagging line: swipe for gusts, hold for a storm; pegs pop and laundry blows away. | XPBD cloth + rope on CPU + WebGL2 (`src/toys/laundry`) |
 
 Every toy has a **Tune** panel (top right) with live sliders, a **Based on** list linking the papers and reference code it uses, and an FPS readout (top centre).
@@ -39,7 +40,6 @@ Next toys from the backlog in [docs/research/physics.md](docs/research/physics.m
 | Toy | Sim | Papers / sources |
 |---|---|---|
 | **Jelly Stack** — wobbly blocks to stack and slap | Shape matching / XPBD (2D), VBD later | [Müller et al. 2005, shape matching](https://dl.acm.org/doi/10.1145/1073204.1073216) · [Vertex Block Descent 2024](https://graphics.cs.utah.edu/research/projects/vbd/) · [2MP: Complementary Dynamics](https://www.youtube.com/watch?v=s8Nm_ytwO6w) |
-| **Ferro Blob** — magnetic liquid that spikes at your finger | Particle fluid + magnetic forces (or shader fake) | [2MP: Surface-Only Ferrofluids](https://www.youtube.com/watch?v=nJ86LCA0Asw) · [2MP: Large-scale Ferrofluids](https://www.youtube.com/watch?v=goD36hVVl7M) |
 
 ## Run
 
