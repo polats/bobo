@@ -5,7 +5,7 @@ import { Pointers } from './shell/pointers';
 import { toyIcon } from './shell/icons';
 import type { Toy, ToyInstance } from './shell/types';
 // Each toy folder exports exactly one Toy from index.ts; the hub lists them in this order.
-const ORDER = ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread'];
+const ORDER = ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro'];
 const toys = Object.values(import.meta.glob<Record<string, unknown>>('./toys/*/index.ts', { eager: true }))
   .flatMap((m) => Object.values(m).filter(isToy))
   .sort((a, b) => rank(a.id) - rank(b.id));

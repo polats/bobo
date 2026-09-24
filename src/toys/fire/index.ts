@@ -1,0 +1,526 @@
+import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
+import { Program, compile, createDouble, createTarget, destroyTarget, gridSize, type DoubleTarget, type Target } from '../../shell/gl';
+import * as F from '../ink/shaders';
+import * as S from './shaders';
+import { Burn } from './burn';
+
+export const fireToy: Toy = {
+  id: 'fire',
+  title: 'Campfire',
+  blurb: 'Stack logs, strike a match, blow on the embers. Fire climbs the wood; douse it and it hisses.',
+  tech: 'Fire fluid + burning cells · WebGL2',
+  swatch: 'linear-gradient(145deg,#ff9a1f,#e8410f 50%,#3a0d2e)',
+  refs: [
+    {
+      short: 'TMP #21',
+      title: 'Ten Minute Physics #21 — fire simulation',
+      url: 'https://matthias-research.github.io/pages/tenMinutePhysics/index.html',
+      use: 'Fire as a grid fluid with temperature: buoyancy lifts hot gas, cooling fades it.',
+    },
+    {
+      short: 'Stam 1999',
+      title: 'Stam — Stable Fluids (SIGGRAPH 1999)',
+      url: 'https://dl.acm.org/doi/10.1145/311535.311548',
+      use: 'The solver underneath (shared with Ink Swirl): advection, pressure projection, vorticity.',
+    },
+    {
+      short: 'Wood combustion',
+      title: 'Two Minute Papers — Burning Down Virtual Trees… In Real Time! (Interactive Wood Combustion)',
+      url: 'https://www.youtube.com/watch?v=2jwVDRKKDME',
+      use: 'Inspiration for fuel that burns away, chars and spreads fire along the wood.',
+    },
+    {
+      short: 'GPU Gems 38',
+      title: 'GPU Gems ch. 38 — Fast Fluid Dynamics Simulation on the GPU',
+      url: 'https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-38-fast-fluid-dynamics-simulation-gpu',
+      use: 'Buoyancy and temperature fields as extra fragment-shader passes.',
+    },
+  ],
+  async create(ctx) {
+    return new Campfire(ctx);
+  },
+};
+
+type Tool = 'match' | 'wood' | 'blow' | 'water';
+const TOOLS: { id: Tool; label: string; glyph: string; swatch: string }[] = [
+  { id: 'match', label: 'Match', glyph: '🔥', swatch: '#ff8a1f' },
+  { id: 'wood', label: 'Logs', glyph: '🪵', swatch: '#9a6232' },
+  { id: 'blow', label: 'Blow', glyph: '💨', swatch: '#cfe3ff' },
+  { id: 'water', label: 'Water', glyph: '💧', swatch: '#3d8bff' },
+];
+
+const GROUND = 0.14;
+
+class Campfire implements ToyInstance {
+  private gl: WebGL2RenderingContext;
+  private quad: WebGLVertexArrayObject;
+  private p: Record<string, Program>;
+  private velocity!: DoubleTarget;
+  private pressure!: DoubleTarget;
+  private divergence!: Target;
+  private curl!: Target;
+  private heat!: DoubleTarget;
+  private emission!: Target;
+  private bloom: Target[] = [];
+  private burn!: Burn;
+  private burnTex!: WebGLTexture;
+  private emberVao: WebGLVertexArrayObject;
+  private emberBuf: WebGLBuffer;
+  private emberData = new Float32Array(900 * 4);
+  private width = 1;
+  private height = 1;
+  private tool: Tool = 'match';
+  private dock: HTMLElement;
+  private buttons: HTMLButtonElement[] = [];
+  private lastPos = new Map<number, [number, number]>();
+  private wind = 0;
+  private oxygen = 0;
+
+  readonly cfg = {
+    simRes: 112,
+    heatRes: 224,
+    burnRes: 180,
+    buoyancy: 1.0,
+    heatRate: 1.5,
+    cooling: 2.6,
+    curl: 22,
+    velFade: 0.6,
+    spread: 2.2,
+    burnRate: 0.05,
+    embers: 1,
+    bloom: 0.55,
+  };
+
+  constructor(private ctx: ToyContext) {
+    const gl = ctx.canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false });
+    if (!gl) throw new Error('WebGL2 is not available on this device.');
+    if (!gl.getExtension('EXT_color_buffer_float') && !gl.getExtension('EXT_color_buffer_half_float')) {
+      throw new Error('This device cannot render to float textures.');
+    }
+    gl.getExtension('OES_texture_float_linear');
+    this.gl = gl;
+    const vert = compile(gl, gl.VERTEX_SHADER, F.baseVert);
+    const mk = (src: string) => new Program(gl, vert, src);
+    this.p = {
+      splat: mk(F.splatFrag),
+      advect: mk(F.advectionFrag),
+      divergence: mk(F.divergenceFrag),
+      curl: mk(F.curlFrag),
+      vorticity: mk(F.vorticityFrag),
+      pressure: mk(F.pressureFrag),
+      gradient: mk(F.gradientSubtractFrag),
+      clear: mk(F.clearFrag),
+      prefilter: mk(F.bloomPrefilterFrag),
+      blur: mk(F.blurFrag),
+      source: mk(S.sourceFrag),
+      buoyancy: mk(S.buoyancyFrag),
+      emission: mk(S.emissionFrag),
+      display: mk(S.displayFrag),
+      ember: new Program(gl, compile(gl, gl.VERTEX_SHADER, S.emberVert), S.emberFrag),
+    };
+    this.quad = gl.createVertexArray()!;
+    gl.bindVertexArray(this.quad);
+    const qb = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, qb);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    this.emberVao = gl.createVertexArray()!;
+    gl.bindVertexArray(this.emberVao);
+    this.emberBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.emberBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, this.emberData.byteLength, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
+
+    this.width = ctx.canvas.width;
+    this.height = ctx.canvas.height;
+    this.allocate();
+    this.dock = this.buildDock();
+    this.buildPanel();
+    this.buildCampfire();
+  }
+
+  // ---------------------------------------------------------------- resources
+
+  private allocate() {
+    const gl = this.gl;
+    this.release();
+    const [sw, sh] = gridSize(this.cfg.simRes, this.width, this.height);
+    const [hw, hh] = gridSize(this.cfg.heatRes, this.width, this.height);
+    this.velocity = createDouble(gl, sw, sh, gl.LINEAR);
+    this.pressure = createDouble(gl, sw, sh, gl.NEAREST);
+    this.divergence = createTarget(gl, sw, sh, gl.NEAREST);
+    this.curl = createTarget(gl, sw, sh, gl.NEAREST);
+    this.heat = createDouble(gl, hw, hh, gl.LINEAR);
+    this.emission = createTarget(gl, hw, hh, gl.LINEAR);
+    let [bw, bh] = gridSize(160, this.width, this.height);
+    for (let i = 0; i < 5 && bw >= 4 && bh >= 4; i++) {
+      this.bloom.push(createTarget(gl, bw, bh, gl.LINEAR));
+      bw >>= 1;
+      bh >>= 1;
+    }
+    const [cw, ch] = gridSize(this.cfg.burnRes, this.width, this.height);
+    const old = this.burn;
+    this.burn = new Burn(cw, ch);
+    Object.assign(this.burn.cfg, { spread: this.cfg.spread, burnRate: this.cfg.burnRate, emberRate: this.cfg.embers });
+    if (old) this.buildCampfire();
+    this.burnTex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.burnTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, cw, ch, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    this.ctx.setStatus(`fluid ${sw}×${sh} · burn ${cw}×${ch}`);
+  }
+
+  private release() {
+    const gl = this.gl;
+    if (!this.velocity) return;
+    for (const d of [this.velocity, this.pressure, this.heat]) {
+      destroyTarget(gl, d.read);
+      destroyTarget(gl, d.write);
+    }
+    for (const t of [this.divergence, this.curl, this.emission, ...this.bloom]) destroyTarget(gl, t);
+    this.bloom = [];
+    gl.deleteTexture(this.burnTex);
+  }
+
+  /** A little teepee of logs over a cross-piece, already smouldering at the base. */
+  private buildCampfire() {
+    const b = this.burn;
+    b.clearAll();
+    const aspect = this.width / this.height;
+    const cx = 0.5;
+    const s = Math.min(1, 0.55 / aspect) * 0.5; // keep the fire a sensible size in landscape
+    const L = (x0: number, y0: number, x1: number, y1: number, r = 0.017) => b.log(cx + x0 * s, y0, cx + x1 * s, y1, r);
+    L(-0.42, GROUND + 0.012, 0.42, GROUND + 0.02, 0.02);
+    L(-0.3, GROUND + 0.03, 0.34, GROUND + 0.01, 0.018);
+    L(-0.28, GROUND + 0.02, 0.04, GROUND + 0.24);
+    L(0.3, GROUND + 0.02, -0.02, GROUND + 0.24);
+    L(-0.06, GROUND + 0.015, 0.12, GROUND + 0.22, 0.015);
+    // A spare log off to the side to light later.
+    L(0.62, GROUND + 0.01, 0.98, GROUND + 0.03, 0.019);
+    b.ignite(cx, GROUND + 0.035, 0.03);
+  }
+
+  // ---------------------------------------------------------------- UI
+
+  private buildDock() {
+    const dock = document.createElement('div');
+    dock.className = 'dock';
+    this.buttons = TOOLS.map((t) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = t.glyph;
+      btn.setAttribute('aria-label', t.label);
+      btn.style.setProperty('--swatch', t.swatch);
+      btn.addEventListener('click', () => this.setTool(t.id));
+      return btn;
+    });
+    dock.append(...this.buttons);
+    this.ctx.overlay.appendChild(dock);
+    this.setTool('match');
+    return dock;
+  }
+
+  private setTool(t: Tool) {
+    this.tool = t;
+    this.buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(TOOLS[i].id === t)));
+  }
+
+  private buildPanel() {
+    const { panel } = this.ctx;
+    const c = this.cfg;
+    const sync = () => Object.assign(this.burn.cfg, { spread: c.spread, burnRate: c.burnRate, emberRate: c.embers });
+    panel.heading('Flames');
+    panel.slider(c, 'buoyancy', { label: 'Flame height', min: 0.5, max: 4, step: 0.05 });
+    panel.slider(c, 'heatRate', { label: 'Heat', min: 0.5, max: 8, step: 0.1 });
+    panel.slider(c, 'cooling', { label: 'Cooling', min: 0.3, max: 5, step: 0.05 });
+    panel.slider(c, 'curl', { label: 'Flicker (vorticity)', min: 0, max: 50, step: 1 });
+    panel.heading('Wood');
+    panel.slider(c, 'spread', { label: 'Spread speed', min: 0.3, max: 6, step: 0.1, onChange: sync });
+    panel.slider(c, 'burnRate', { label: 'Burn speed', min: 0.01, max: 0.3, step: 0.005, onChange: sync });
+    panel.slider(c, 'embers', { label: 'Embers', min: 0, max: 4, step: 0.1, onChange: sync });
+    panel.slider(c, 'bloom', { label: 'Glow', min: 0, max: 2, step: 0.05 });
+    panel.action('New campfire', () => this.buildCampfire());
+    panel.action('Clear everything', () => this.burn.clearAll());
+  }
+
+  // ---------------------------------------------------------------- frame
+
+  frame(dt: number, t: number) {
+    this.handleInput(dt);
+    this.wind *= Math.exp(-dt * 1.5);
+    this.oxygen *= Math.exp(-dt * 1.2);
+    this.burn.cfg.oxygen = this.oxygen;
+    this.burn.step(dt, this.wind);
+    if (this.burn.newlyLit > 6) this.ctx.haptic('light');
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.burnTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.burn.w, this.burn.h, gl.RGBA, gl.UNSIGNED_BYTE, this.burn.tex);
+    this.step(dt, t);
+    this.render(t);
+    this.ctx.setStatus(`fire ${Math.round(this.burn.intensity * 100)}% · ${this.burn.embers.length} embers`);
+  }
+
+  private handleInput(dt: number) {
+    const aspect = this.width / this.height;
+    for (const p of this.ctx.pointers.active.values()) {
+      const last = this.lastPos.get(p.id) ?? [p.x, p.y];
+      this.lastPos.set(p.id, [p.x, p.y]);
+      const y = Math.max(p.y, GROUND - 0.02);
+      switch (this.tool) {
+        case 'wood': {
+          if (p.justDown) {
+            this.lastPos.set(p.id, [p.x, y]);
+            break;
+          }
+          this.burn.log(last[0], Math.max(last[1], GROUND - 0.02), p.x, y, 0.017);
+          break;
+        }
+        case 'match': {
+          const lit = this.burn.ignite(p.x, y, 0.022);
+          if (p.justDown || lit > 0) this.ctx.haptic('light');
+          this.splat(this.heat, p.x, y, 0, 0, [0.9, 0.05, 0], 0.08);
+          break;
+        }
+        case 'blow': {
+          const dx = (p.x - last[0]) * (aspect < 1 ? aspect : 1);
+          const dy = p.y - last[1];
+          const speed = Math.hypot(dx, dy) / Math.max(dt, 1e-3);
+          if (speed > 0.05) {
+            this.splat(this.velocity, p.x, p.y, dx * 5000, dy * 5000, [0, 0, 0], 0.35);
+            this.wind = Math.max(-1.5, Math.min(1.5, this.wind + dx * 18));
+            this.oxygen = Math.min(1.5, this.oxygen + speed * dt * 1.5);
+            if (speed > 1) this.ctx.haptic('light');
+          }
+          break;
+        }
+        case 'water': {
+          const hissed = this.burn.douse(p.x, y, 0.045);
+          this.splat(this.heat, p.x, y, 0, 0, [-0.8, 0, 0.35 + Math.min(1, hissed / 40)], 0.25);
+          this.splat(this.velocity, p.x, y, 0, -250, [0, 0, 0], 0.3);
+          if (hissed > 3) this.ctx.haptic('medium');
+          break;
+        }
+      }
+    }
+    for (const id of [...this.lastPos.keys()]) if (!this.ctx.pointers.active.has(id)) this.lastPos.delete(id);
+  }
+
+  private splat(target: DoubleTarget, x: number, y: number, vx: number, vy: number, color: [number, number, number], radius: number) {
+    const gl = this.gl;
+    const aspect = this.width / this.height;
+    const u = this.p.splat.use();
+    gl.uniform1i(u.uTarget, 0);
+    gl.uniform1f(u.aspectRatio, aspect);
+    gl.uniform2f(u.point, x, y);
+    gl.uniform1f(u.radius, (radius / 100) * (aspect > 1 ? aspect : 1));
+    if (target === this.velocity) gl.uniform3f(u.color, vx, vy, 0);
+    else gl.uniform3f(u.color, color[0], color[1], color[2]);
+    this.bindTex(0, target.read.tex);
+    this.blit(target.write);
+    target.swap();
+  }
+
+  private step(dt: number, t: number) {
+    const gl = this.gl;
+    const c = this.cfg;
+    const vel = this.velocity;
+    gl.disable(gl.BLEND);
+
+    let u = this.p.source.use();
+    gl.uniform1i(u.uHeat, 0);
+    gl.uniform1i(u.uBurn, 1);
+    gl.uniform1f(u.dt, dt);
+    gl.uniform1f(u.time, t % 1000);
+    gl.uniform1f(u.heatRate, c.heatRate);
+    gl.uniform1f(u.cooling, c.cooling);
+    gl.uniform1f(u.oxygen, this.oxygen);
+    this.bindTex(0, this.heat.read.tex);
+    this.bindTex(1, this.burnTex);
+    this.blit(this.heat.write);
+    this.heat.swap();
+
+    u = this.p.buoyancy.use();
+    gl.uniform1i(u.uVelocity, 0);
+    gl.uniform1i(u.uHeat, 1);
+    gl.uniform1f(u.dt, dt);
+    gl.uniform1f(u.buoyancy, c.buoyancy * 600);
+    gl.uniform1f(u.wind, this.wind);
+    this.bindTex(0, vel.read.tex);
+    this.bindTex(1, this.heat.read.tex);
+    this.blit(vel.write);
+    vel.swap();
+
+    u = this.p.curl.use();
+    gl.uniform2f(u.texelSize, vel.texelX, vel.texelY);
+    gl.uniform1i(u.uVelocity, 0);
+    this.bindTex(0, vel.read.tex);
+    this.blit(this.curl);
+
+    u = this.p.vorticity.use();
+    gl.uniform2f(u.texelSize, vel.texelX, vel.texelY);
+    gl.uniform1i(u.uVelocity, 0);
+    gl.uniform1i(u.uCurl, 1);
+    gl.uniform1f(u.curl, c.curl);
+    gl.uniform1f(u.dt, dt);
+    this.bindTex(0, vel.read.tex);
+    this.bindTex(1, this.curl.tex);
+    this.blit(vel.write);
+    vel.swap();
+
+    u = this.p.divergence.use();
+    gl.uniform2f(u.texelSize, vel.texelX, vel.texelY);
+    gl.uniform1i(u.uVelocity, 0);
+    this.bindTex(0, vel.read.tex);
+    this.blit(this.divergence);
+
+    u = this.p.clear.use();
+    gl.uniform1i(u.uTexture, 0);
+    gl.uniform1f(u.value, 0.8);
+    this.bindTex(0, this.pressure.read.tex);
+    this.blit(this.pressure.write);
+    this.pressure.swap();
+
+    u = this.p.pressure.use();
+    gl.uniform2f(u.texelSize, vel.texelX, vel.texelY);
+    gl.uniform1i(u.uDivergence, 1);
+    this.bindTex(1, this.divergence.tex);
+    gl.uniform1i(u.uPressure, 0);
+    for (let i = 0; i < 18; i++) {
+      this.bindTex(0, this.pressure.read.tex);
+      this.blit(this.pressure.write);
+      this.pressure.swap();
+    }
+
+    u = this.p.gradient.use();
+    gl.uniform2f(u.texelSize, vel.texelX, vel.texelY);
+    gl.uniform1i(u.uPressure, 0);
+    gl.uniform1i(u.uVelocity, 1);
+    this.bindTex(0, this.pressure.read.tex);
+    this.bindTex(1, vel.read.tex);
+    this.blit(vel.write);
+    vel.swap();
+
+    u = this.p.advect.use();
+    gl.uniform2f(u.texelSize, vel.texelX, vel.texelY);
+    gl.uniform2f(u.velTexelSize, vel.texelX, vel.texelY);
+    gl.uniform1i(u.uVelocity, 0);
+    gl.uniform1i(u.uSource, 1);
+    gl.uniform1f(u.dt, dt);
+    gl.uniform1f(u.dissipation, c.velFade);
+    this.bindTex(0, vel.read.tex);
+    this.bindTex(1, vel.read.tex);
+    this.blit(vel.write);
+    vel.swap();
+
+    gl.uniform2f(u.texelSize, this.heat.texelX, this.heat.texelY);
+    gl.uniform1f(u.dissipation, 0.05);
+    this.bindTex(0, vel.read.tex);
+    this.bindTex(1, this.heat.read.tex);
+    this.blit(this.heat.write);
+    this.heat.swap();
+  }
+
+  private sceneUniforms(u: Record<string, WebGLUniformLocation>, t: number) {
+    const gl = this.gl;
+    gl.uniform1i(u.uHeat, 0);
+    gl.uniform1i(u.uBurn, 1);
+    gl.uniform2f(u.burnTexel, 1 / this.burn.w, 1 / this.burn.h);
+    gl.uniform1f(u.time, t % 1000);
+    gl.uniform1f(u.groundY, GROUND);
+    gl.uniform1f(u.aspect, this.width / this.height);
+    gl.uniform3f(u.light, this.burn.cx, Math.max(GROUND, this.burn.cy + 0.04), Math.min(1, this.burn.intensity));
+    this.bindTex(0, this.heat.read.tex);
+    this.bindTex(1, this.burnTex);
+  }
+
+  private render(t: number) {
+    const gl = this.gl;
+    // Emission → bloom chain.
+    let u = this.p.emission.use();
+    this.sceneUniforms(u, t);
+    this.blit(this.emission);
+    const levels = this.bloom;
+    u = this.p.prefilter.use();
+    const thr = 0.55, knee = thr * 0.7;
+    gl.uniform1i(u.uTexture, 0);
+    gl.uniform3f(u.curve, thr - knee, knee * 2, 0.25 / knee);
+    gl.uniform1f(u.threshold, thr);
+    gl.uniform2f(u.texelSize, this.emission.texelX, this.emission.texelY);
+    this.bindTex(0, this.emission.tex);
+    this.blit(levels[0]);
+    u = this.p.blur.use();
+    gl.uniform1i(u.uTexture, 0);
+    for (let i = 1; i < levels.length; i++) {
+      gl.uniform2f(u.texelSize, levels[i - 1].texelX, levels[i - 1].texelY);
+      this.bindTex(0, levels[i - 1].tex);
+      this.blit(levels[i]);
+    }
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    for (let i = levels.length - 1; i > 0; i--) {
+      gl.uniform2f(u.texelSize, levels[i].texelX, levels[i].texelY);
+      this.bindTex(0, levels[i].tex);
+      this.blit(levels[i - 1]);
+    }
+    gl.disable(gl.BLEND);
+
+    u = this.p.display.use();
+    this.sceneUniforms(u, t);
+    gl.uniform1i(u.uBloom, 2);
+    gl.uniform1f(u.bloomIntensity, this.cfg.bloom);
+    this.bindTex(2, levels[0].tex);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.width, this.height);
+    gl.bindVertexArray(this.quad);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    // Embers on top, additive.
+    const em = this.burn.embers;
+    if (em.length) {
+      const d = this.emberData;
+      em.forEach((e, i) => d.set([e.x, e.y, e.life, e.size], i * 4));
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.emberBuf);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.subarray(0, em.length * 4));
+      const eu = this.p.ember.use();
+      gl.uniform1f(eu.pixelRatio, this.ctx.pixelRatio);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.bindVertexArray(this.emberVao);
+      gl.drawArrays(gl.POINTS, 0, em.length);
+      gl.disable(gl.BLEND);
+    }
+  }
+
+  private bindTex(unit: number, tex: WebGLTexture) {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+  }
+
+  private blit(target: Target) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+    gl.viewport(0, 0, target.width, target.height);
+    gl.bindVertexArray(this.quad);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  resize(width: number, height: number) {
+    if (width === this.width && height === this.height) return;
+    this.width = width;
+    this.height = height;
+    this.allocate();
+  }
+
+  destroy() {
+    this.release();
+    this.dock.remove();
+    this.gl.getExtension('WEBGL_lose_context')?.loseContext();
+  }
+}

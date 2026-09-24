@@ -20,6 +20,14 @@ const ICONS: Record<string, string> = {
   laundry: svg('<path d="M9 4 4.5 6.5 3 11l3 1 .5-1.5V20h11v-9.5L18 12l3-1-1.5-4.5L15 4c-.4 1.4-1.6 2.2-3 2.2S9.4 5.4 9 4Z"/>'),
   // Pull the Thread: a ball of yarn with a loose end.
   thread: svg('<circle cx="11" cy="11" r="7"/><path d="M5.3 8.2c3.6-1.3 8-.7 11.3 1.8"/><path d="M4.1 11.6c4-1.4 9-.7 12.6 2.2"/><path d="M6.2 15.8c3-1.3 6.6-1 9.6.7"/><path d="M16.9 14.6c1.2 2 2.2 4.1 4.1 5.4"/>'),
+  // Campfire: a flame over crossed logs.
+  fire: svg('<path d="M12 3c.6 2.6 3.8 4.4 3.8 8.1A3.8 3.8 0 0 1 12 15a3.8 3.8 0 0 1-3.8-3.9c0-1.7.9-2.8 1.8-3.8.2 1.2.8 2 1.6 2.3C11.2 7.8 11.4 5 12 3Z"/><path d="m4.5 20.5 15-3"/><path d="m4.5 17.5 15 3"/>'),
+  // Jelly Stack: two stacked wobbly blocks.
+  jelly: svg('<path d="M6.5 20.5h11c.8 0 1.5-.7 1.5-1.5v-3.2c0-.9-.7-1.6-1.6-1.6-1 0-1.3-.7-2.4-.7s-1.4.7-2.5.7-1.4-.7-2.5-.7-1.4.7-2.4.7c-.9 0-1.6.7-1.6 1.6V19c0 .8.7 1.5 1.5 1.5Z"/><path d="M8.5 12.5V9c0-.8.6-1.4 1.4-1.4h4.2c.8 0 1.4.6 1.4 1.4v3.5"/><path d="M10.2 5.2c.6-.9 1.3-1.4 1.8-1.4s1.2.5 1.8 1.4"/>'),
+  // Demolition Tower: a wrecking ball swinging at a brick stack.
+  demolition: svg('<path d="M3 3.5h8"/><path d="M5 3.5 12 12"/><circle cx="13.5" cy="13.5" r="2.5"/><rect x="16" y="15" width="5" height="3" rx=".5"/><rect x="16" y="18" width="5" height="2.5" rx=".5"/><rect x="18" y="12" width="3" height="3" rx=".5"/>'),
+  // Ferro Blob: spikes rising toward a magnet.
+  ferro: svg('<path d="M3.5 19.5c2.5-1 3-5.5 4-5.5s1.2 4 2.5 4 1.4-7 2-7 .8 7 2 7 1.5-4 2.5-4 1.5 4.5 4 5.5"/><path d="M3 20.5h18"/><path d="M8 4v3a4 4 0 0 0 8 0V4"/><path d="M8 4h2.5v3"/><path d="M16 4h-2.5v3"/>'),
 };
 
 const FALLBACK = svg('<circle cx="12" cy="12" r="7"/><path d="M12 8v4l2.5 2.5"/>');
