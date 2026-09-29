@@ -9,7 +9,7 @@ export const knockdownToy: Toy = {
   id: 'knockdown',
   title: 'Knockdown',
   blurb: 'A fairground stall of tin cans, jam jars and crates. Pull back the slingshot and clear every shelf; glass shatters, jam splats.',
-  tech: 'Soft-step rigid bodies · Voronoi shatter · WebGL2',
+  tech: "Demolition's soft-step solver · scripted knock-back · baked Voronoi shards · WebGL2",
   swatch: 'repeating-linear-gradient(90deg,#dd2433 0 18px,#f6eee0 18px 36px)',
   refs: [
     {
@@ -22,13 +22,13 @@ export const knockdownToy: Toy = {
       short: 'Box2D 3.1',
       title: 'Erin Catto — Box2D 3.1 (2025)',
       url: 'https://box2d.org/posts/2025/04/box2d-3.1/',
-      use: 'Rolling resistance per material: cans roll away, crates stay put.',
+      use: 'Rolling resistance inherited from Demolition Tower, so crates and debris settle instead of skating.',
     },
     {
-      short: 'DeepFracture',
-      title: 'DeepFracture: a generative approach for predicting brittle fractures (Huang et al.)',
-      url: 'https://nikoloside.graphics/deepfracture/',
-      use: 'Picking a fracture pattern by where the blow lands; here three pre-baked Voronoi patterns per jar.',
+      short: 'Müller 2013',
+      title: 'Müller, Chentanez, Kim — Real Time Dynamic Fracture with Volumetric Approximate Convex Decompositions (SIGGRAPH 2013)',
+      url: 'https://doi.org/10.1145/2461912.2461934',
+      use: 'Pre-computed Voronoi fracture patterns placed where the blow lands; here three per jar size, picked by where it is hit, and each cell simplified to a box.',
     },
     {
       short: 'Juice it',

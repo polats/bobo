@@ -36,9 +36,21 @@ export interface Loop {
   stop(): void;
 }
 
+/** One vibration mode of a struck object: frequency (Hz), relative amplitude, and decay time (s to -60 dB). */
+export interface Mode {
+  freq: number;
+  amp: number;
+  decay: number;
+}
+
 export interface Sound {
   play(voice: Voice, opts?: PlayOpts): void;
   loop(kind: LoopKind): Loop;
+  /**
+   * Modal synthesis: ring a struck object as a sum of exponentially decaying sines, one per mode
+   * (van den Doel & Pai). Toys that compute their own modes (a cast bell, a shard) pass them here.
+   */
+  modes(partials: Mode[], opts?: { gain?: number; pan?: number; strike?: number }): void;
 }
 
 const MAX_VOICES = 14;
@@ -215,6 +227,47 @@ export const sound: Sound = {
       },
       (dur + 0.1) * 1000,
     );
+  },
+
+  modes(partials, opts = {}) {
+    if (!enabled) return;
+    const c = audio();
+    if (!c || !master || c.state !== 'running' || active >= MAX_VOICES || !partials.length) return;
+    const now = c.currentTime;
+    const out = c.createGain();
+    out.gain.value = Math.max(0, Math.min(1, opts.gain ?? 1)) * 0.5;
+    let tail: AudioNode = out;
+    if (opts.pan && c.createStereoPanner) {
+      const p = c.createStereoPanner();
+      p.pan.value = Math.max(-1, Math.min(1, opts.pan));
+      out.connect(p);
+      tail = p;
+    }
+    tail.connect(master);
+    let longest = 0;
+    const total = partials.reduce((a, m) => a + Math.abs(m.amp), 0) || 1;
+    for (const m of partials.slice(0, 12)) {
+      if (m.freq < 20 || m.freq > 16000 || m.decay <= 0) continue;
+      const o = c.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = m.freq;
+      const g = c.createGain();
+      // -60 dB over the decay time, after a tiny attack so the strike doesn't click.
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, Math.abs(m.amp) / total), now + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.004 + m.decay);
+      o.connect(g).connect(out);
+      o.start(now);
+      o.stop(now + m.decay + 0.05);
+      longest = Math.max(longest, m.decay);
+    }
+    // The strike itself: a short noise tick whose brightness the caller picks (0 soft .. 1 hard).
+    if (opts.strike !== undefined) burst(c, now, 0.012, out, 0.3, 'bandpass', 800 + opts.strike * 4000, 600, 0.8, 0.001);
+    active++;
+    setTimeout(() => {
+      active--;
+      tail.disconnect();
+    }, (longest + 0.15) * 1000);
   },
 
   loop(kind) {

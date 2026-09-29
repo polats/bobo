@@ -28,6 +28,12 @@ export const mergeToy: Toy = {
       url: 'https://matthias-research.github.io/pages/publications/posBasedDyn.pdf',
       use: 'Position-based contacts and friction between gummies and the jar, with substepping.',
     },
+    {
+      short: 'Zhang 2020',
+      title: 'Zhang, Bang, Levin, Jacobson — Complementary Dynamics (SIGGRAPH Asia 2020)',
+      url: 'https://doi.org/10.1145/3414685.3417819',
+      use: 'The idea of layering secondary jiggle on top of the primary motion; here a damped squash-and-stretch spring kicked by changes in velocity.',
+    },
   ],
   async create(ctx) {
     return new JellyMerge(ctx);

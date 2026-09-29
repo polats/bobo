@@ -9,7 +9,7 @@ export const pourToy: Toy = {
   id: 'pour',
   title: 'Pour Sort',
   blurb: 'Tap a tube, then another, and it tips and pours a real stream. Sort every colour — oil floats, syrup sinks.',
-  tech: 'Clavet particle stream · density layers · WebGL2',
+  tech: 'Tube-sort puzzle with density layers · Clavet particle stream · WebGL2',
   swatch: 'linear-gradient(135deg,#f8405a,#ffd23f 45%,#2f7fff)',
   refs: [
     {
@@ -19,28 +19,16 @@ export const pourToy: Toy = {
       use: 'Double-density relaxation for the pour stream, ported from Ferro Blob: cohesive, so it necks and drips.',
     },
     {
-      short: 'Buoyancy 2026',
-      title: 'Buoyancy-driven phase separation (SIGGRAPH 2026 papers)',
-      url: 'https://s2026.conference-schedule.org/?post_type=page&p=15&id=papers_363&sess=sess108',
-      use: 'Design twist: liquids carry densities, so a light layer poured under a heavy one rises through it.',
-    },
-    {
-      short: 'Rayleigh–Taylor',
-      title: 'Rayleigh–Taylor instability (Wikipedia)',
-      url: 'https://en.wikipedia.org/wiki/Rayleigh%E2%80%93Taylor_instability',
-      use: 'Why the lighter layer climbs as a column of blobs rather than a flat sheet.',
-    },
-    {
       short: 'Sutherland–Hodgman',
       title: 'Sutherland–Hodgman polygon clipping (Wikipedia)',
       url: 'https://en.wikipedia.org/wiki/Sutherland%E2%80%93Hodgman_algorithm',
       use: 'Exact liquid volume in a tilted tube: clip the tube outline by the level surface, bisect for the height.',
     },
     {
-      short: 'Helmholtz',
-      title: 'Helmholtz resonance (Wikipedia)',
-      url: 'https://en.wikipedia.org/wiki/Helmholtz_resonance',
-      use: 'The pour sound brightens as the target fills and its air column shortens.',
+      short: 'Air column',
+      title: 'Acoustic resonance (Wikipedia)',
+      url: 'https://en.wikipedia.org/wiki/Acoustic_resonance',
+      use: 'Why a filling bottle rises in pitch as its air column shortens; here the pour sound simply brightens with the fill level.',
     },
   ],
   async create(ctx) {

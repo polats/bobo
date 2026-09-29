@@ -8,20 +8,20 @@ export const peelToy: Toy = {
   id: 'peel',
   title: 'Peel It',
   blurb: 'Roll the film off a new phone, a sticker, fresh masking tape. Slow and high comes off clean; yank it and it tears.',
-  tech: 'XPBD film + Kendall peel · WebGL2',
+  tech: 'Position-based film + Kendall peel threshold · WebGL2',
   swatch: 'linear-gradient(135deg,#7597de,#ff8fb1 55%,#fff1c1)',
   refs: [
     {
       short: 'Kendall 1975',
       title: 'Kendall — Thin-film peeling: the elastic term (J. Phys. D, 1975)',
       url: 'https://doi.org/10.1088/0022-3727/8/13/005',
-      use: 'F = G·w / (1 − cos θ): every glue point lets go at a pull that falls as the peel angle rises.',
+      use: 'The inextensible term, F = G·w / (1 − cos θ): each glue point lets go at a pull that falls as the peel angle rises. The paper’s elastic term is left out.',
     },
     {
       short: 'Macklin 2016',
       title: 'Macklin, Müller, Chentanez — XPBD (MIG 2016)',
       url: 'https://dl.acm.org/doi/10.1145/2994258.2994272',
-      use: 'Compliant constraints for the film, the curl hinges and the soft glue layer.',
+      use: 'Compliance for the curl hinges; the film’s edges and the glue are plain position-based constraints.',
     },
     {
       short: 'Macklin 2019',

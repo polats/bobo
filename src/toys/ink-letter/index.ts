@@ -16,7 +16,7 @@ export const inkLetterToy: Toy = {
       short: 'Invisible ink',
       title: 'Invisible ink (Wikipedia)',
       url: 'https://en.wikipedia.org/wiki/Invisible_ink',
-      use: 'Lemon-juice ink that browns before the paper does, and cobalt ink that needs more heat: the two inks here.',
+      use: 'Lemon-juice ink that browns before the paper does, and a blue ink that needs more heat. (Real cobalt ink fades again as it cools; this toy keeps it.)',
     },
     {
       short: 'Heat equation',
@@ -28,7 +28,7 @@ export const inkLetterToy: Toy = {
       short: 'Noita',
       title: 'Exploring the Tech and Design of Noita (Petri Purho, GDC 2019)',
       url: 'https://www.youtube.com/watch?v=prXuyMCgbTc',
-      use: 'Per-cell fire that spreads to neighbours and burns material away, as in Campfire’s Burn grid.',
+      use: 'Per-cell fire that spreads to neighbours and burns material away.',
     },
   ],
   async create(ctx) {

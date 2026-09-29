@@ -30,6 +30,12 @@ export const demolitionToy: Toy = {
       use: 'Box–box contact manifolds: separating-axis test, incident edge clipping and feature IDs.',
     },
     {
+      short: 'Guendelman 2003',
+      title: 'Guendelman, Bridson, Fedkiw — Nonconvex Rigid Bodies with Stacking (SIGGRAPH 2003)',
+      url: 'https://doi.org/10.1145/882262.882358',
+      use: 'Shock propagation: an extra bottom-up pass that treats lower bodies as heavier, so tall stacks stop creeping. Here a half-strength version.',
+    },
+    {
       short: 'Box2D 3.1',
       title: 'Erin Catto — Box2D 3.1 (2025)',
       url: 'https://box2d.org/posts/2025/04/box2d-3.1/',

@@ -7,7 +7,7 @@ export const kintsugiToy: Toy = {
   id: 'kintsugi',
   title: 'Kintsugi',
   blurb: 'Drop a porcelain bowl, fit the shards back together, then pour molten gold along every crack.',
-  tech: 'Voronoi fracture + 2.5D tumbling shards + 1D seam flow · Canvas 2D',
+  tech: 'Voronoi fracture · hopping shards · gold front along seams · Canvas 2D',
   swatch: 'linear-gradient(135deg,#1c2742 0 30%,#9fc7b3 30% 58%,#f4c64e 58% 64%,#9fc7b3 64% 80%,#1c2742 80%)',
   refs: [
     {
@@ -15,6 +15,12 @@ export const kintsugiToy: Toy = {
       title: 'Kintsugi (Wikipedia)',
       url: 'https://en.wikipedia.org/wiki/Kintsugi',
       use: 'The craft: breaks are mended with lacquer and powdered gold, so the repair becomes part of the piece.',
+    },
+    {
+      short: 'Müller 2013',
+      title: 'Müller, Chentanez, Kim — Real Time Dynamic Fracture with Volumetric Approximate Convex Decompositions (SIGGRAPH 2013)',
+      url: 'https://doi.org/10.1145/2461912.2461934',
+      use: 'The pre-fractured Voronoi pattern, packed tighter around the impact point; here a 2D pattern per piece, fixed when it is dropped.',
     },
     {
       short: 'Voronoi',
