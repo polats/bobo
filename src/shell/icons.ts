@@ -42,6 +42,21 @@ const ICONS: Record<string, string> = {
 ICONS.spool = svg('<rect x="6" y="3.5" width="12" height="2.5" rx="1"/><rect x="6" y="18" width="12" height="2.5" rx="1"/><path d="M8 6v12M16 6v12"/><path d="m8 9 8-1.5M8 12l8-1.5M8 15l8-1.5"/><path d="M16 13.5c2.5.5 4 2.2 4 4.5"/>');
 // Dig Down: a shovel in a mound of dirt.
 ICONS.dig = svg('<path d="M3 20.5h18"/><path d="M5 20.5c1.2-3 3.6-4.5 7-4.5s5.8 1.5 7 4.5"/><path d="M14.5 3.5 11 12"/><path d="m9.2 10.8 3.9 1.6-1.4 3.2c-.4.9-1.4 1.3-2.3.9l-.6-.2c-.9-.4-1.3-1.4-.9-2.3Z"/><path d="M13.3 3.1l2.6 1"/>');
+// Knockdown: a ball flying at a pyramid of cans.
+ICONS.knockdown = svg('<rect x="11" y="15" width="4" height="5.5" rx=".8"/><rect x="16" y="15" width="4" height="5.5" rx=".8"/><rect x="13.5" y="9" width="4" height="5.5" rx=".8"/><path d="M9 20.5h12.5"/><circle cx="5" cy="8" r="2.2"/><path d="M1.8 11.8 3 10.6M1.5 8.5h1.3"/>');
+// Peel It: a sheet with its corner peeling back.
+ICONS.peel = svg('<path d="M4.5 3.5h15v10.5l-5.5 6H4.5Z"/><path d="M19.5 14c-3.2-.2-5.4 1.8-5.5 6"/><path d="M8 8h6M8 11h4"/>');
+// Pour Sort: two test tubes, one pouring into the other.
+ICONS.pour = svg('<path d="M14 9.5v8.8a2.5 2.5 0 0 0 5 0V9.5"/><path d="M13.3 9.5h6.4"/><path d="M14 15h5"/><path d="m4.5 4.5 6.2 2.5-2.6 6.3a2.3 2.3 0 0 1-4.3-1.7Z"/><path d="M10.7 7c1.2.9 2.2 1.9 3 3"/>');
+// Mow Lines: a push mower on striped grass.
+ICONS.mow = svg('<path d="M3 20.5h18"/><path d="M5 17.5h9l1.5-4h-9Z"/><circle cx="7" cy="18.5" r="1.3"/><circle cx="13" cy="18.5" r="1.3"/><path d="m15.5 13.5 4-9"/><path d="M18.3 4.2h2.4"/>');
+// Foundry: a bell hanging from its yoke, with a clapper.
+ICONS.foundry = svg('<path d="M9 3.5h6"/><path d="M12 3.5v2"/><path d="M6.5 17c0-.6.5-1 1-1.5 1-1 1-2.6 1-4.5a3.5 3.5 0 0 1 7 0c0 1.9 0 3.5 1 4.5.5.5 1 .9 1 1.5Z"/><path d="M5 17h14"/><circle cx="12" cy="19.2" r="1.3"/>');
+ICONS['ink-letter'] = svg('<path d="M4.5 3.5h11l4 4v13h-15Z"/><path d="M15.5 3.5v4h4"/><path d="M8 11h8M8 14h5"/><path d="M12 21c-1.5-1.2-2-2.3-1.4-3.4.3.8.8 1.2 1.4 1.3 0-1 .5-1.8 1.2-2.4.1 1.3 1 2 1 3.1 0 .6-.4 1.1-.9 1.4"/>');
+// Kintsugi: a bowl with a gold seam.
+ICONS.kintsugi = svg('<path d="M3.5 10.5h17c-.4 4.8-3.9 8-8.5 8s-8.1-3.2-8.5-8Z"/><path d="M9 20.5h6"/><path d="m10.5 10.5 1.5 2.5-1 2 1.5 3.3"/>');
+// Fingerprint Dust: a fingerprint whorl.
+ICONS.prints = svg('<path d="M8.2 19.5c-1.4-2-2.2-4.4-2.2-7a6 6 0 0 1 11.1-3.2"/><path d="M18 12.5c0 2.8-.6 5-1.6 7"/><path d="M9.2 12.5a2.8 2.8 0 0 1 5.6 0c0 2.6-.7 5-2 7"/><path d="M12 12.5c0 2.3-.5 4.4-1.5 6.2"/>');
 
 const FALLBACK = svg('<circle cx="12" cy="12" r="7"/><path d="M12 8v4l2.5 2.5"/>');
 

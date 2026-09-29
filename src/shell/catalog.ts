@@ -27,6 +27,10 @@ const CATALOG: Record<string, Entry> = {
   merge: { added: '2026-09-29T10:18:47-04:00', category: 'Soft & squishy' },
   rinse: { added: '2026-09-29T10:23:12-04:00', category: 'Make & reveal' },
   sandjar: { added: '2026-09-29T10:21:38-04:00', category: 'Make & reveal' },
+  knockdown: { added: '2026-09-29T17:06:55-04:00', category: 'Smash & build' },
+  peel: { added: '2026-09-29T17:06:55-04:00', category: 'Make & reveal' },
+  pour: { added: '2026-09-29T17:06:55-04:00', category: 'Fluids' },
+  mow: { added: '2026-09-29T17:06:55-04:00', category: 'Make & reveal' },
   dig: { added: '2026-09-29T12:08:03-04:00', category: 'Sand & powder' },
   spool: { added: '2026-09-29T11:46:37-04:00', category: 'Cloth & yarn' },
 };
@@ -59,7 +63,7 @@ const UPDATES: Record<string, Update[]> = {
 /** A toy's updates, newest first (the shared sound pass included). */
 export function updates(id: string): Update[] {
   const own = UPDATES[id] ?? [];
-  return own.includes(SOUND) || id === 'merge' || id === 'spool' || id === 'dig' ? own : [...own, SOUND];
+  return own.includes(SOUND) || ['merge', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints'].includes(id) ? own : [...own, SOUND];
 }
 
 /** Latest notable update, if any. */
