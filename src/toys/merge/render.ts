@@ -119,6 +119,7 @@ void main() {
   float a;
   if (vKind < 0.5) a = pow(1.0 - smoothstep(0.2, 1.0, r), 1.6);          // soft shadow
   else if (vKind < 1.5) a = 1.0 - smoothstep(0.5, 1.0, r);               // dust puff
+  else if (vKind > 2.5) a = smoothstep(0.16, 0.0, abs(r - 0.82)) * step(r, 1.0);  // ring
   else {                                                                   // sparkle
     vec2 u = abs(vUv);
     a = max(smoothstep(0.18, 0.0, u.x) * (1.0 - u.y), smoothstep(0.18, 0.0, u.y) * (1.0 - u.x));
@@ -218,7 +219,8 @@ export interface Fx {
   life: number;
   max: number;
   size: number;
-  kind: 1 | 2;
+  /** 1 dust puff, 2 sparkle, 3 expanding ring. */
+  kind: 1 | 2 | 3;
   color: [number, number, number];
 }
 
@@ -393,8 +395,8 @@ export class JellyRenderer {
     const fq: number[] = [];
     for (const f of fx) {
       const t = f.life / f.max;
-      const a = f.kind === 2 ? Math.sin(t * Math.PI) : (1 - t) * 0.55;
-      const s = f.size * (f.kind === 1 ? 0.6 + t * 0.9 : 1 - t * 0.4);
+      const a = f.kind === 3 ? (1 - t) ** 2 * 0.8 : f.kind === 2 ? Math.sin(t * Math.PI) : (1 - t) * 0.55;
+      const s = f.size * (f.kind === 3 ? 0.35 + 0.65 * (1 - (1 - t) ** 3) : f.kind === 1 ? 0.6 + t * 0.9 : 1 - t * 0.4);
       const corners = [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]];
       for (const [cx, cy] of corners) fq.push(f.x + cx * s, f.y + cy * s, cx, cy, f.color[0], f.color[1], f.color[2], a, f.kind);
     }

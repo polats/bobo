@@ -59,7 +59,16 @@ const FRUIT: Tier[] = [
 const LAST = FRUIT.length - 1;
 const SHAPE_SET: ShapeId[] = ['ball', 'star', 'heart', 'cube', 'slab', 'ball', 'star', 'heart', 'cube', 'ball', 'bobo'];
 
-const GROW_TIME = 0.15;
+/** Two matching gummies smoosh into each other for this long before they pop into one. */
+const FUSE_TIME = 0.2;
+
+interface Fusion {
+  a: Body;
+  b: Body;
+  t: number;
+  firm: [number, number];
+  color: [[number, number, number], [number, number, number]];
+}
 
 class JellyMerge implements ToyInstance {
   private gl: WebGL2RenderingContext;
@@ -72,7 +81,11 @@ class JellyMerge implements ToyInstance {
   private jar: [number, number, number, number] = [0, 1, 0.3, 1.5];
   private holderY = 1.7;
   private tiers = new Map<Body, number>();
-  private growing = new Map<Body, number>();
+  /** Newly merged gummies spring from their parents' size up to their tier: scale and its rate. */
+  private growing = new Map<Body, { s: number; v: number }>();
+  private fusing: Fusion[] = [];
+  private hitstop = 0;
+  private quake = 0;
   private fx: Fx[] = [];
   private heldTier = 0;
   private nextTier = 0;
@@ -129,6 +142,7 @@ class JellyMerge implements ToyInstance {
         }
         return { bodies: this.world.bodies.length, particles: this.world.n };
       };
+      (window as unknown as Record<string, unknown>).__spawn = (t: number, x: number, y: number) => void this.spawnTier(t, x, y);
       (window as unknown as Record<string, unknown>).__mergeStats = () => ({
         bodies: this.world.bodies.length,
         particles: this.world.n,
@@ -176,6 +190,7 @@ class JellyMerge implements ToyInstance {
     this.held.clear();
     this.tiers.clear();
     this.growing.clear();
+    this.fusing = [];
     this.score = 0;
     this.combo = 0;
     this.maxTier = 0;
@@ -293,13 +308,21 @@ class JellyMerge implements ToyInstance {
   // ---------------------------------------------------------------- frame
 
   frame(dt: number, t: number) {
+    if (import.meta.env.DEV) dt *= (window as unknown as { __slow?: number }).__slow ?? 1;
     this.time = t;
     this.handleInput(dt);
     const t0 = performance.now();
-    this.world.step(dt);
+    // Hit-stop: the world holds its breath for a few frames when two gummies pop.
+    this.hitstop -= dt;
+    if (this.hitstop <= 0) {
+      this.pullFusing(dt);
+      this.world.step(dt);
+      this.grow(dt);
+      this.mergeTouching();
+      this.stepFusing(dt);
+    }
     const simMs = performance.now() - t0;
-    this.grow(dt);
-    this.mergeTouching();
+    this.stepShake(dt);
     this.checkFull(dt);
     this.react();
     this.stepFx(dt);
@@ -351,14 +374,20 @@ class JellyMerge implements ToyInstance {
     }, 260);
   }
 
-  /** Newly merged gummies start at the size of their parents and swell into their tier. */
+  /**
+   * Newly merged gummies start at their parents' size and spring up into their tier, overshooting
+   * a little. The rest shape itself grows, so the swell physically shoves the neighbours aside.
+   */
   private grow(dt: number) {
-    for (const [b, s] of this.growing) {
-      const ns = Math.min(1, s + dt / GROW_TIME * 0.3);
-      const f = ns / s;
-      scaleBody(b, f);
-      if (ns >= 1) this.growing.delete(b);
-      else this.growing.set(b, ns);
+    for (const [b, g] of this.growing) {
+      g.v += (380 * (1 - g.s) - 15 * g.v) * dt;
+      const ns = Math.min(1.16, Math.max(0.4, g.s + g.v * dt));
+      scaleBody(b, ns / g.s);
+      g.s = ns;
+      if (Math.abs(1 - g.s) < 0.004 && Math.abs(g.v) < 0.05) {
+        scaleBody(b, 1 / g.s);
+        this.growing.delete(b);
+      }
     }
   }
 
@@ -370,10 +399,10 @@ class JellyMerge implements ToyInstance {
     for (let i = 0; i < bodies.length; i++) {
       const a = bodies[i];
       const ta = this.tiers.get(a);
-      if (ta === undefined || used.has(a)) continue;
+      if (ta === undefined || used.has(a) || this.isFusing(a)) continue;
       for (let j = i + 1; j < bodies.length; j++) {
         const b = bodies[j];
-        if (used.has(b) || this.tiers.get(b) !== ta) continue;
+        if (used.has(b) || this.tiers.get(b) !== ta || this.isFusing(b)) continue;
         const reach = (this.radius(ta) * this.sizeOf(a) + this.radius(ta) * this.sizeOf(b)) * 1.06 + this.world.r * 2;
         if (Math.hypot(a.cx - b.cx, a.cy - b.cy) > reach) continue;
         used.add(a);
@@ -382,11 +411,95 @@ class JellyMerge implements ToyInstance {
         break;
       }
     }
-    for (const [a, b] of pairs) this.merge(a, b);
+    for (const [a, b] of pairs) this.startFusion(a, b);
   }
 
   private sizeOf(b: Body) {
-    return this.growing.get(b) ?? 1;
+    return this.growing.get(b)?.s ?? 1;
+  }
+
+  private isFusing(b: Body) {
+    return this.fusing.some((f) => f.a === b || f.b === b);
+  }
+
+  /** Two matching gummies touched: they go soft and start squeezing into each other. */
+  private startFusion(a: Body, b: Body) {
+    this.fusing.push({ a, b, t: 0, firm: [a.firm, b.firm], color: [a.color, b.color] });
+    for (const x of [a, b]) {
+      this.world.wake(x);
+      x.firm = 0;
+    }
+    this.ctx.haptic('light');
+  }
+
+  /**
+   * Draw each fusing pair together along the line between their centres. Contacts stay on, so
+   * they flatten against each other into a squeezed double blob instead of passing through.
+   */
+  private pullFusing(dt: number) {
+    const w = this.world;
+    for (const f of this.fusing) {
+      const { a, b } = f;
+      let nx = b.cx - a.cx, ny = b.cy - a.cy;
+      const d = Math.hypot(nx, ny) || 1e-6;
+      nx /= d;
+      ny /= d;
+      const reach = a.halfWidth + b.halfWidth;
+      const left = Math.max(0.04, FUSE_TIME - f.t);
+      // Close the gap to 45% of touching distance by the time the fuse runs out.
+      const want = Math.max(0, d - reach * 0.45) / left / 2;
+      const rel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+      const kick = Math.max(0, want + rel / 2) * Math.min(1, dt * 30);
+      for (const [x, sgn] of [[a, 1], [b, -1]] as const) {
+        w.wake(x);
+        for (let i = x.start; i < x.start + x.count; i++) {
+          w.vel[i * 2] += nx * kick * sgn;
+          w.vel[i * 2 + 1] += ny * kick * sgn;
+        }
+      }
+    }
+  }
+
+  private stepFusing(dt: number) {
+    const bodies = new Set(this.world.bodies);
+    const done: Fusion[] = [];
+    this.fusing = this.fusing.filter((f) => {
+      // Poofed or knocked out mid-squeeze (Zen mode, shake): let the survivor be.
+      if (!bodies.has(f.a) || !bodies.has(f.b)) {
+        for (const [k, x] of [f.a, f.b].entries()) if (bodies.has(x)) {
+          x.firm = f.firm[k];
+          x.color = f.color[k];
+        }
+        return false;
+      }
+      f.t += dt;
+      // Heat up as the pressure builds: brighter, with a quickening pulse.
+      const k = Math.min(1, f.t / FUSE_TIME);
+      const glow = k * (0.3 + 0.25 * k + 0.12 * Math.sin(f.t * 55));
+      for (const [j, x] of [f.a, f.b].entries()) {
+        const c = f.color[j];
+        x.color = [c[0] + (1 - c[0]) * glow, c[1] + (1 - c[1]) * glow, c[2] + (1 - c[2]) * glow];
+        x.jkv += (j ? -1 : 1) * 0.6;
+      }
+      const d = Math.hypot(f.b.cx - f.a.cx, f.b.cy - f.a.cy);
+      if (f.t >= FUSE_TIME || d < (f.a.halfWidth + f.b.halfWidth) * 0.42) {
+        done.push(f);
+        return false;
+      }
+      return true;
+    });
+    for (const f of done) this.merge(f.a, f.b);
+  }
+
+  private stepShake(dt: number) {
+    this.quake = Math.max(0, this.quake - dt * 3);
+    const c = this.ctx.canvas;
+    if (this.quake <= 0) {
+      if (c.style.transform) c.style.transform = '';
+      return;
+    }
+    const a = this.quake * this.quake * 7;
+    c.style.transform = `translate(${(Math.sin(this.time * 91) * a).toFixed(2)}px, ${(Math.cos(this.time * 77) * a).toFixed(2)}px)`;
   }
 
   private merge(a: Body, b: Body) {
@@ -397,6 +510,10 @@ class JellyMerge implements ToyInstance {
     const cy = (a.cy * ma + b.cy * mb) / (ma + mb);
     const vx = (a.vx * ma + b.vx * mb) / (ma + mb);
     const vy = (a.vy * ma + b.vy * mb) / (ma + mb);
+    let ax = b.cx - a.cx, ay = b.cy - a.cy;
+    const al = Math.hypot(ax, ay) || 1;
+    ax /= al;
+    ay /= al;
     for (const x of [a, b]) {
       this.tiers.delete(x);
       this.growing.delete(x);
@@ -417,11 +534,15 @@ class JellyMerge implements ToyInstance {
       const nb = this.spawnTier(nt, cx, cy);
       if (nb) {
         const s0 = Math.max(0.55, this.radius(t) / this.radius(nt));
-        // Shrink to the parents' size around the merge point, then swell in grow().
+        // Start at the parents' size, stretched along the line they met on (area kept), so the
+        // new gummy visibly springs round out of the squeezed pair; grow() then swells it up.
+        const along = 1.38, across = 1 / along;
         for (let i = nb.start; i < nb.start + nb.count; i++) {
           for (const arr of [w.pos, w.prev]) {
-            arr[i * 2] = cx + (arr[i * 2] - cx) * s0;
-            arr[i * 2 + 1] = cy + (arr[i * 2 + 1] - cy) * s0;
+            const px = (arr[i * 2] - cx) * s0, py = (arr[i * 2 + 1] - cy) * s0;
+            const u = px * ax + py * ay, v = -px * ay + py * ax;
+            arr[i * 2] = cx + ax * u * along - ay * v * across;
+            arr[i * 2 + 1] = cy + ay * u * along + ax * v * across;
           }
           w.vel[i * 2] = vx;
           w.vel[i * 2 + 1] = vy + 0.4;
@@ -430,13 +551,17 @@ class JellyMerge implements ToyInstance {
         nb.cx = cx;
         nb.cy = cy;
         w.evict(nb);
-        this.growing.set(nb, s0);
-        nb.jsv = 3 + nt * 0.25;
+        this.growing.set(nb, { s: s0, v: 2.5 });
+        nb.jsv = 1.2 + nt * 0.12;
         nb.age = 0.31;
         w.wakeAround(nb);
+        this.shockwave(nb, cx, cy, this.radius(nt), nt);
       }
       this.score += ((nt + 1) * (nt + 2)) / 2;
       this.burst(cx, cy, 10 + nt * 3, FRUIT[nt].color, this.radius(nt));
+      this.fx.push({ x: cx, y: cy, vx: 0, vy: 0, life: 0, max: 0.32 + nt * 0.015, size: this.radius(nt) * 2.2, kind: 3, color: [1, 1, 1] });
+      this.hitstop = 0.035 + nt * 0.006;
+      if (nt >= 5) this.quake = Math.min(1, 0.35 + (nt - 5) * 0.12);
       this.ctx.haptic(nt >= 7 ? 'heavy' : nt >= 4 ? 'medium' : 'light');
       if (nt > this.maxTier) {
         this.maxTier = nt;
@@ -459,6 +584,30 @@ class JellyMerge implements ToyInstance {
       }
     }
     this.updateHud();
+  }
+
+  /** The pop pushes nearby gummies away, strongest up close: the pile visibly jolts and jiggles. */
+  private shockwave(nb: Body, x: number, y: number, radius: number, tier: number) {
+    const w = this.world;
+    const R = radius * 2.4 + 0.05;
+    const kick = 0.9 + tier * 0.12;
+    const hit = new Set<Body>();
+    for (const o of w.bodies) {
+      if (o === nb || Math.hypot(o.cx - x, o.cy - y) > R + o.ext) continue;
+      for (let i = o.start; i < o.start + o.count; i++) {
+        const dx = w.pos[i * 2] - x, dy = w.pos[i * 2 + 1] - y;
+        const d = Math.hypot(dx, dy);
+        if (d > R || d < 1e-6) continue;
+        const f = kick * (1 - d / R) ** 2;
+        w.vel[i * 2] += (dx / d) * f;
+        w.vel[i * 2 + 1] += (dy / d) * f + f * 0.3;
+        hit.add(o);
+      }
+    }
+    for (const o of hit) {
+      w.wake(o);
+      o.jsv += kick * 1.5;
+    }
   }
 
   private burst(x: number, y: number, n: number, color: [number, number, number], radius: number) {
@@ -566,7 +715,7 @@ class JellyMerge implements ToyInstance {
   private stepFx(dt: number) {
     for (const f of this.fx) {
       f.life += dt;
-      f.vy -= 1.5 * dt;
+      if (f.kind !== 3) f.vy -= 1.5 * dt;
       f.x += f.vx * dt;
       f.y += f.vy * dt;
     }
@@ -584,6 +733,7 @@ class JellyMerge implements ToyInstance {
   destroy() {
     this.hud.remove();
     this.style.remove();
+    this.ctx.canvas.style.transform = '';
     this.renderer.destroy();
   }
 }
