@@ -379,7 +379,84 @@ export class JellyWorld {
         vel[i * 2 + 1] = vy * dd;
       }
     }
+    this.unjam();
     this.track(dt);
+  }
+
+  /** Is (x, y) inside body b's outline, grown outward by pad? */
+  contains(b: Body, x: number, y: number, pad = 0) {
+    const [t00, t01, t10, t11] = b.T;
+    const det = t00 * t11 - t01 * t10;
+    if (Math.abs(det) < 1e-9) return false;
+    const dx = x - b.cx, dy = y - b.cy;
+    const k = 1 / (1 + pad / b.ext);
+    const qx = ((t11 * dx - t01 * dy) / det) * k;
+    const qy = ((-t10 * dx + t00 * dy) / det) * k;
+    // Ring 0 of the render mesh is the outline itself, in rest space.
+    const v = b.verts;
+    let inside = false;
+    for (let a = 0, c = OUTLINE_POINTS - 1; a < OUTLINE_POINTS; c = a++) {
+      const ax = v[a * 2], ay = v[a * 2 + 1], cx = v[c * 2], cy = v[c * 2 + 1];
+      if (ay > qy !== cy > qy && qx < ((cx - ax) * (qy - ay)) / (cy - ay) + ax) inside = !inside;
+    }
+    return inside;
+  }
+
+  private overlapCount(b: Body, o: Body, pad: number) {
+    let n = 0;
+    for (let i = o.start; i < o.start + o.count; i++) if (this.contains(b, this.pos[i * 2], this.pos[i * 2 + 1], pad)) n++;
+    return n;
+  }
+
+  /**
+   * Separate b from every body it has swallowed or sunk into. Particle contacts can only resolve
+   * shallow overlaps: a gummy that ends up inside another (a merge spawning on top of it, a hard
+   * drop punching through) gets jammed there, and the lopsided contact pushes send the pair flying.
+   * The smaller of each pair is shifted out whole (position and history together, so it isn't
+   * launched), up-biased because the jar is open at the top.
+   */
+  evict(b: Body) {
+    for (const o of this.bodies) {
+      if (o === b || Math.hypot(o.cx - b.cx, o.cy - b.cy) > b.ext + o.ext + this.r * 2) continue;
+      if (o.ext <= b.ext) this.pushOut(b, o);
+      else this.pushOut(o, b);
+    }
+  }
+
+  private pushOut(big: Body, o: Body) {
+    const { pos, prev, r } = this;
+    if (!this.overlapCount(big, o, 0)) return;
+    let nx = o.cx - big.cx, ny = o.cy - big.cy;
+    const l = Math.hypot(nx, ny);
+    nx = l > 1e-6 ? nx / l : 0;
+    ny = (l > 1e-6 ? ny / l : 1) + 0.6;
+    const nl = Math.hypot(nx, ny);
+    const stepX = (nx / nl) * r * 0.75, stepY = (ny / nl) * r * 0.75;
+    for (let it = 0; it < 60 && this.overlapCount(big, o, r * 0.5); it++) {
+      for (let i = o.start; i < o.start + o.count; i++) {
+        pos[i * 2] += stepX;
+        pos[i * 2 + 1] += stepY;
+        prev[i * 2] += stepX;
+        prev[i * 2 + 1] += stepY;
+      }
+      o.cx += stepX;
+      o.cy += stepY;
+    }
+    this.wake(big);
+    this.wake(o);
+  }
+
+  /** Safety net: any body whose centre has sunk inside another one gets evicted. */
+  private unjam() {
+    const bs = this.bodies;
+    for (let i = 0; i < bs.length; i++)
+      for (let j = 0; j < bs.length; j++) {
+        if (i === j) continue;
+        const big = bs[i], small = bs[j];
+        if (big.ext < small.ext || Math.hypot(big.cx - small.cx, big.cy - small.cy) > big.ext) continue;
+        // Centres are refreshed by shape matching; sleeping bodies keep theirs, which is still right.
+        if (this.contains(big, small.cx, small.cy, -this.r)) this.pushOut(big, small);
+      }
   }
 
   /** Centre, and the rotation/linear blend that best maps the rest shape onto the current particles. */

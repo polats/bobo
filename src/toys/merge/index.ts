@@ -427,6 +427,9 @@ class JellyMerge implements ToyInstance {
           w.vel[i * 2 + 1] = vy + 0.4;
         }
         scaleBody(nb, s0);
+        nb.cx = cx;
+        nb.cy = cy;
+        w.evict(nb);
         this.growing.set(nb, s0);
         nb.jsv = 3 + nt * 0.25;
         nb.age = 0.31;
