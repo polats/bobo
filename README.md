@@ -17,6 +17,8 @@ A physics sandbox for playing with novel, satisfying, performant simulations —
 | **Pull the Thread** | Grab the loose end of a chunky knit and unravel it stitch by stitch, row by row, into a pile of crinkly yarn. | Stitch grid over XPBD cloth + XPBD yarn strand on WebGL2 (`src/toys/thread`) |
 | **Campfire** | Stack logs, strike a match, blow on the embers; fire climbs the wood, chars it, and hisses when doused. | Stable-fluids fire (heat, smoke, buoyancy) + CPU burning cells on WebGL2 (`src/toys/fire`) |
 | **Jelly Stack** | Tap to drop gummy cubes, stars, hearts and a smiling Bobo; stack them, grab and fling, slap the tower over. | Shape-matching soft bodies + PBD contacts on WebGL2 (`src/toys/jelly`) |
+| **Marbling Tray** | Drop inks on a bath, drag combs, rakes and a stylus into feathered ebru patterns, then lay paper to keep a print. | Mixwell analytic marbling brushes (SIGGRAPH 2026 Best Paper) on WebGL2 (`src/toys/marble`) |
+| **Jelly Merge** | Suika with gummies: drop jelly fruit into a jar; matching sizes squish into a bigger one, all the way to a giant Bobo. | Jelly Stack's shape matching + merge rules on WebGL2 (`src/toys/merge`) |
 | **Demolition Tower** | Swing a wrecking ball, drop bombs or flick cannonballs into brick towers, pyramids and castles; blocks shatter into debris and dust. | Pure-TS 2D rigid bodies (Box2D v3-style soft step, sleeping) + WebGL2 (`src/toys/demolition`) |
 | **Ferro Blob** | Drag a magnet under a dish of black ferrofluid: it crawls after you and bristles with spikes; two fingers split it, taps drop droplets. | Double-density particle liquid + Rosensweig spike lattice + chrome shading on WebGL2 (`src/toys/ferro`) |
 | **Laundry Line** | Washing pegged to a sagging line: swipe for gusts, hold for a storm; pegs pop and laundry blows away. | XPBD cloth + rope on CPU + WebGL2 (`src/toys/laundry`) |
@@ -54,6 +56,17 @@ npm run dev        # http://localhost:5280, also on your LAN IP for phones on th
 ```
 
 Goo Lab and Splash Tank need WebGPU: current Chrome/Edge, Safari 26+ (iOS/iPadOS/macOS 26). The other toys run anywhere with WebGL2.
+
+## Android
+
+With an Android device attached (USB debugging on), JDK 21 and the Android SDK installed:
+
+```sh
+npm run mobile:android:install   # build a debug APK, install and launch it
+node mobile/android-soak.mjs goo 30   # launch a toy with the autoplay finger and print FPS from logcat
+```
+
+`ANDROID_SERIAL` picks a device when several are attached. The APK is written to `mobile/out/bobo-debug.apk`.
 
 ## iPhone
 

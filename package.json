@@ -9,9 +9,12 @@
     "preview": "vite preview --host 0.0.0.0",
     "mobile:ios": "node mobile/build-ios.mjs",
     "mobile:ios:install": "node mobile/build-ios.mjs --install",
-    "dev:https": "HTTPS=1 vite --host 0.0.0.0"
+    "dev:https": "HTTPS=1 vite --host 0.0.0.0",
+    "mobile:android": "node mobile/build-android.mjs",
+    "mobile:android:install": "node mobile/build-android.mjs --install"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
     "@capacitor/core": "^8.5.2",
     "@capacitor/haptics": "^8.0.2",
     "@capacitor/ios": "^8.5.2"

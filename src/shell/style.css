@@ -270,7 +270,7 @@ html, body {
   z-index: 3;
   left: 50%;
   transform: translateX(-50%);
-  top: calc(56px + var(--safe-top));
+  top: calc(72px + var(--safe-top));
   display: flex;
   align-items: center;
   gap: 8px;
