@@ -13,6 +13,13 @@ export interface ToyContext {
   setStatus(text: string): void;
   /** Light haptic tick on impacts; no-op where unsupported. */
   haptic(strength?: 'light' | 'medium' | 'heavy'): void;
+  /**
+   * Shared completion meter (a ring at the top of the screen). Pass 0..1 with an optional label
+   * ("clean", "revealed"); pass null to hide it. Cheap to call every frame.
+   */
+  progress(fraction: number | null, label?: string): void;
+  /** One-shot "done!" payoff: confetti burst, chime-ready hook, heavy haptic. Optional message. */
+  celebrate(message?: string): void;
 }
 
 export interface ToyInstance {

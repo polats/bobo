@@ -3,6 +3,7 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Panel } from './shell/panel';
 import { Pointers } from './shell/pointers';
 import { toyIcon } from './shell/icons';
+import { CATEGORIES, meta, newCutoff } from './shell/catalog';
 import type { Toy, ToyInstance } from './shell/types';
 // Each toy folder exports exactly one Toy from index.ts; the hub lists them in this order.
 const ORDER = ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro'];
@@ -32,36 +33,134 @@ function route() {
   else mountHub();
 }
 
+type Sort = 'newest' | 'az' | 'shelf';
+
+function loadPref<T extends string>(key: string, fallback: T): T {
+  try {
+    return (localStorage.getItem(`bobo.${key}`) as T) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function savePref(key: string, value: string) {
+  try {
+    localStorage.setItem(`bobo.${key}`, value);
+  } catch {
+    /* private mode: preferences just don't stick */
+  }
+}
+
 function mountHub() {
   const hub = document.createElement('div');
   hub.className = 'hub';
   const inner = document.createElement('div');
   inner.className = 'hub-inner';
+  const cutoff = newCutoff(toys.map((t) => t.id));
+  const newCount = toys.filter((t) => meta(t.id).added.getTime() >= cutoff).length;
+
   const header = document.createElement('header');
   header.className = 'hub-header';
-  header.innerHTML = `<h1>bobo</h1><p class="lede">Physics toys. Poke everything.</p>`;
-  const grid = document.createElement('div');
-  grid.className = 'tile-grid';
+  header.innerHTML = `<h1>bobo</h1><p class="lede">Physics toys. Poke everything.</p><p class="hub-count"></p>`;
+  header.querySelector('.hub-count')!.textContent = `${toys.length} toys · ${newCount} new`;
+
+  let sort = loadPref<Sort>('sort', 'newest');
+  let filter = loadPref<string>('filter', 'All');
+  const toolbar = document.createElement('div');
+  toolbar.className = 'hub-toolbar';
+  const sorts = document.createElement('div');
+  sorts.className = 'hub-sorts';
+  sorts.setAttribute('role', 'tablist');
+  const sortButtons = (
+    [
+      ['newest', 'Newest'],
+      ['shelf', 'By shelf'],
+      ['az', 'A–Z'],
+    ] as [Sort, string][]
+  ).map(([value, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.setAttribute('role', 'tab');
+    b.addEventListener('click', () => {
+      sort = value;
+      savePref('sort', value);
+      render();
+    });
+    return [value, b] as const;
+  });
+  sorts.append(...sortButtons.map(([, b]) => b));
+  const chips = document.createElement('div');
+  chips.className = 'hub-chips';
+  const chipButtons = ['All', ...CATEGORIES].map((c) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = c;
+    b.addEventListener('click', () => {
+      filter = c;
+      savePref('filter', c);
+      render();
+    });
+    return [c, b] as const;
+  });
+  chips.append(...chipButtons.map(([, b]) => b));
+  toolbar.append(sorts, chips);
+
+  const list = document.createElement('div');
   const gpuTiles: HTMLElement[] = [];
-  for (const toy of toys) {
-    const tile = document.createElement('button');
-    tile.type = 'button';
-    tile.className = 'tile';
-    tile.style.setProperty('--swatch', toy.swatch);
-    tile.innerHTML = `<span class="tile-top"><span class="tile-icon"></span><span class="tile-platform"></span></span><span class="tile-text"><b></b><span class="tile-blurb"></span></span><em class="tile-tech"></em>`;
-    tile.querySelector('.tile-icon')!.innerHTML = toyIcon(toy.id);
-    tile.querySelector('b')!.textContent = toy.title;
-    tile.querySelector('.tile-blurb')!.textContent = toy.blurb;
-    // "Stable Fluids · WebGL2" → platform badge + technique label.
-    const parts = toy.tech.split('·').map((x) => x.trim());
-    const platform = parts.find((x) => /WebGL2|WebGPU/.test(x)) ?? '';
-    tile.querySelector('.tile-platform')!.textContent = platform;
-    tile.querySelector('.tile-tech')!.textContent = parts.filter((x) => x !== platform).join(' · ');
-    tile.title = `Based on ${toy.refs.map((r) => r.short).join(' · ')}`;
-    tile.addEventListener('click', () => (location.hash = toy.id));
-    if (/WebGPU/.test(toy.tech)) gpuTiles.push(tile);
-    grid.appendChild(tile);
+  const tiles = new Map(toys.map((t) => [t.id, makeTile(t, cutoff, gpuTiles)]));
+
+  const dayLabel = (d: Date) => {
+    const days = Math.floor((Date.now() - d.getTime()) / 86400e3);
+    if (days <= 0) return 'Added today';
+    if (days === 1) return 'Added yesterday';
+    return `Added ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+  };
+
+  function section(title: string, items: Toy[]) {
+    if (!items.length) return;
+    if (title) {
+      const h = document.createElement('h2');
+      h.className = 'hub-section';
+      h.innerHTML = `<span></span><em></em>`;
+      h.querySelector('span')!.textContent = title;
+      h.querySelector('em')!.textContent = String(items.length);
+      list.appendChild(h);
+    }
+    const grid = document.createElement('div');
+    grid.className = 'tile-grid';
+    grid.append(...items.map((t) => tiles.get(t.id)!));
+    list.appendChild(grid);
   }
+
+  function render() {
+    sortButtons.forEach(([v, b]) => b.setAttribute('aria-selected', String(v === sort)));
+    chipButtons.forEach(([c, b]) => b.setAttribute('aria-pressed', String(c === filter)));
+    list.replaceChildren();
+    const shown = toys.filter((t) => filter === 'All' || meta(t.id).category === filter);
+    if (!shown.length) {
+      const empty = document.createElement('p');
+      empty.className = 'hub-empty';
+      empty.textContent = 'Nothing on this shelf yet.';
+      list.appendChild(empty);
+      return;
+    }
+    if (sort === 'az') {
+      section('', [...shown].sort((a, b) => a.title.localeCompare(b.title)));
+    } else if (sort === 'shelf') {
+      for (const c of CATEGORIES) section(c, shown.filter((t) => meta(t.id).category === c));
+    } else {
+      // Newest first, grouped by the day each batch landed.
+      const byDay = new Map<string, Toy[]>();
+      for (const t of [...shown].sort((a, b) => meta(b.id).added.getTime() - meta(a.id).added.getTime())) {
+        const key = meta(t.id).added.toDateString();
+        byDay.set(key, [...(byDay.get(key) ?? []), t]);
+      }
+      for (const items of byDay.values()) section(dayLabel(meta(items[0].id).added), items);
+    }
+  }
+  render();
+
   const caps = document.createElement('p');
   caps.className = 'caps';
   const gl2 = document.createElement('canvas').getContext('webgl2') ? 'yes' : 'no';
@@ -78,9 +177,31 @@ function mountHub() {
       .requestAdapter()
       .then((a) => setCaps(a ? 'yes' : 'no adapter'))
       .catch(() => setCaps('error'));
-  inner.append(header, grid, caps);
+  inner.append(header, toolbar, list, caps);
   hub.appendChild(inner);
   app.appendChild(hub);
+}
+
+function makeTile(toy: Toy, newCutoffMs: number, gpuTiles: HTMLElement[]) {
+  const m = meta(toy.id);
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = 'tile';
+  tile.style.setProperty('--swatch', toy.swatch);
+  tile.innerHTML = `<span class="tile-top"><span class="tile-icon"></span><span class="tile-badges"><span class="tile-new">New</span><span class="tile-platform"></span></span></span><span class="tile-text"><b></b><span class="tile-blurb"></span></span><em class="tile-tech"></em>`;
+  tile.querySelector('.tile-icon')!.innerHTML = toyIcon(toy.id);
+  tile.querySelector('b')!.textContent = toy.title;
+  tile.querySelector('.tile-blurb')!.textContent = toy.blurb;
+  // "Stable Fluids · WebGL2" → platform badge + technique label.
+  const parts = toy.tech.split('·').map((x) => x.trim());
+  const platform = parts.find((x) => /WebGL2|WebGPU/.test(x)) ?? '';
+  tile.querySelector('.tile-platform')!.textContent = platform;
+  tile.querySelector('.tile-tech')!.textContent = parts.filter((x) => x !== platform).join(' · ');
+  if (m.added.getTime() < newCutoffMs) tile.querySelector('.tile-new')!.remove();
+  tile.title = `Based on ${toy.refs.map((r) => r.short).join(' · ')}`;
+  tile.addEventListener('click', () => (location.hash = toy.id));
+  if (/WebGPU/.test(toy.tech)) gpuTiles.push(tile);
+  return tile;
 }
 
 function mountToy(toy: Toy): () => void {
@@ -90,9 +211,12 @@ function mountToy(toy: Toy): () => void {
   const overlay = document.createElement('div');
   const back = hudButton('‹ Toys', 'hud-back', () => (location.hash = ''));
   const tune = hudButton('Tune', 'hud-tune', () => panel.toggle());
+  const clip = hudButton('● Clip', 'hud-clip', () => recordClip(canvas, clip, stage));
+  if (!('MediaRecorder' in window) || !canvas.captureStream) clip.hidden = true;
   const fps = document.createElement('div');
   fps.className = 'hud-fps';
-  stage.append(canvas, overlay, back, tune, fps);
+  const meter = makeMeter();
+  stage.append(canvas, overlay, back, tune, clip, fps, meter.el);
   app.appendChild(stage);
 
   const panel = new Panel(stage);
@@ -120,7 +244,7 @@ function mountToy(toy: Toy): () => void {
 
   console.log(`[bobo] creating ${toy.id}`);
   toy
-    .create({ canvas, overlay, panel, pointers, pixelRatio, setStatus: (s) => (status = s), haptic })
+    .create({ canvas, overlay, panel, pointers, pixelRatio, setStatus: (s) => (status = s), haptic, progress: meter.set, celebrate: (msg) => celebrate(stage, msg) })
     .then((inst) => {
       if (!alive) return inst.destroy();
       instance = inst;
@@ -198,6 +322,129 @@ function autoplay(pointers: Pointers, t: number) {
     p.x = x;
     p.y = y;
   }
+}
+
+/** Completion ring for toys that have a goal ("73% clean"). */
+function makeMeter() {
+  const el = document.createElement('div');
+  el.className = 'hud-meter';
+  el.hidden = true;
+  el.innerHTML = `<svg viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15"/><circle class="fill" cx="18" cy="18" r="15"/></svg><span></span>`;
+  const fill = el.querySelector<SVGCircleElement>('.fill')!;
+  const text = el.querySelector('span')!;
+  const C = 2 * Math.PI * 15;
+  fill.style.strokeDasharray = `${C}`;
+  let last = '';
+  return {
+    el,
+    set(fraction: number | null, label = '') {
+      if (fraction === null) {
+        el.hidden = true;
+        return;
+      }
+      const f = Math.max(0, Math.min(1, fraction));
+      const key = `${Math.round(f * 100)}|${label}`;
+      el.hidden = false;
+      if (key === last) return;
+      last = key;
+      fill.style.strokeDashoffset = `${C * (1 - f)}`;
+      text.textContent = `${Math.round(f * 100)}%${label ? ` ${label}` : ''}`;
+      el.classList.toggle('done', f >= 1);
+    },
+  };
+}
+
+/** Confetti, a toast and a heavy haptic: the shared "you did it" beat. */
+function celebrate(stage: HTMLElement, message = 'Done!') {
+  haptic('heavy');
+  const colors = ['#ff7ab6', '#ffd166', '#6ee7ff', '#8b5cf6', '#7ee787', '#ffffff'];
+  const r = stage.getBoundingClientRect();
+  for (let i = 0; i < 70; i++) {
+    const c = document.createElement('i');
+    c.className = 'confetti';
+    c.style.background = colors[i % colors.length];
+    c.style.left = `${r.width / 2}px`;
+    c.style.top = `${r.height * 0.3}px`;
+    stage.appendChild(c);
+    const a = Math.random() * Math.PI * 2;
+    const v = 120 + Math.random() * 260;
+    const dx = Math.cos(a) * v;
+    const dy = Math.sin(a) * v - 140;
+    c.animate(
+      [
+        { transform: 'translate(0,0) rotate(0deg)', opacity: 1 },
+        { transform: `translate(${dx}px, ${dy + 520}px) rotate(${(Math.random() - 0.5) * 900}deg)`, opacity: 0 },
+      ],
+      { duration: 1400 + Math.random() * 700, easing: 'cubic-bezier(.2,.6,.4,1)' },
+    ).onfinish = () => c.remove();
+  }
+  const toast = document.createElement('div');
+  toast.className = 'hud-toast';
+  toast.textContent = message;
+  stage.appendChild(toast);
+  toast.animate([{ transform: 'translate(-50%, 12px) scale(.9)', opacity: 0 }, { transform: 'translate(-50%, 0) scale(1)', opacity: 1 }], {
+    duration: 260,
+    easing: 'cubic-bezier(.2,1.4,.4,1)',
+  });
+  setTimeout(() => toast.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400 }).onfinish = () => toast.remove(), 1800);
+}
+
+/** Records the next 8 s of the toy's canvas, then offers share / save. */
+function recordClip(canvas: HTMLCanvasElement, button: HTMLButtonElement, stage: HTMLElement) {
+  if (button.classList.contains('recording')) return;
+  const types = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+  const mimeType = types.find((t) => MediaRecorder.isTypeSupported(t)) ?? '';
+  let rec: MediaRecorder;
+  try {
+    rec = new MediaRecorder(canvas.captureStream(30), mimeType ? { mimeType, videoBitsPerSecond: 6_000_000 } : undefined);
+  } catch (err) {
+    console.error('[bobo] clip failed', err);
+    return;
+  }
+  const chunks: Blob[] = [];
+  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  rec.onstop = () => {
+    button.classList.remove('recording');
+    button.textContent = '● Clip';
+    const type = rec.mimeType || mimeType || 'video/webm';
+    const blob = new Blob(chunks, { type });
+    showClip(stage, blob, type.includes('mp4') ? 'mp4' : 'webm');
+  };
+  button.classList.add('recording');
+  let left = 8;
+  button.textContent = `● ${left}`;
+  const tick = setInterval(() => {
+    left--;
+    button.textContent = `● ${left}`;
+    if (left <= 0) {
+      clearInterval(tick);
+      rec.stop();
+    }
+  }, 1000);
+  rec.start(250);
+  haptic('light');
+}
+
+function showClip(stage: HTMLElement, blob: Blob, ext: string) {
+  const url = URL.createObjectURL(blob);
+  const sheet = document.createElement('div');
+  sheet.className = 'clip-sheet';
+  sheet.innerHTML = `<div class="clip-card"><video autoplay loop muted playsinline></video><div class="clip-actions"><button type="button" data-share>Share</button><a download>Save</a><button type="button" data-close>Close</button></div></div>`;
+  sheet.querySelector('video')!.src = url;
+  const save = sheet.querySelector('a')!;
+  save.href = url;
+  save.download = `bobo-${location.hash.slice(1) || 'toy'}-${Date.now()}.${ext}`;
+  const file = new File([blob], save.download, { type: blob.type });
+  const shareBtn = sheet.querySelector<HTMLButtonElement>('[data-share]')!;
+  if (!navigator.canShare?.({ files: [file] })) shareBtn.hidden = true;
+  shareBtn.addEventListener('click', () => navigator.share({ files: [file], title: 'bobo' }).catch(() => {}));
+  const close = () => {
+    URL.revokeObjectURL(url);
+    sheet.remove();
+  };
+  sheet.querySelector('[data-close]')!.addEventListener('click', close);
+  sheet.addEventListener('click', (e) => e.target === sheet && close());
+  stage.appendChild(sheet);
 }
 
 function hudButton(text: string, cls: string, onClick: () => void) {
