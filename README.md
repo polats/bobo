@@ -1,10 +1,12 @@
 # bobo
 
-![bobo — physics toys you can poke](docs/media/bobo-cover.gif)
+![bobo — what's new: Dig Down, Spool Sort, Jelly Merge, Marbling Tray, Power Rinse, Sand Jar, and upgraded Campfire and Demolition Tower](docs/media/bobo-latest.gif)
 
 A physics sandbox of 18 small toys built on novel, satisfying, performant simulations (liquid, particles, cloth, yarn, soft bodies, sand, dirt), tuned for juicy visuals and sound. It runs in the browser and as an iOS and Android app.
 
 ## Toys
+
+![All 18 toys](docs/media/bobo-cover.gif)
 
 Grouped by the hub's shelves.
 
@@ -29,9 +31,19 @@ Grouped by the hub's shelves.
 | **Power Rinse** | Blast a mud-caked Bobo statue, duck, gnome or mosaic clean; a "% clean" ring fills and hidden details appear. | Erodible mud and moss layers, runoff and spray on WebGL2 (`src/toys/rinse`) |
 | **Sand Jar** | Pour coloured sand through a funnel into a bottle, poke scallops, tilt the strata; or pour matching colours to reveal a hidden picture. | Sand-only falling-sand CA with picture targets on WebGL2 (`src/toys/sandjar`) |
 
-The hub shows each toy as a live preview card, with **New** and **Updated** rows up top (updated toys show what changed right on the card). Tap a toy for its sheet: description, a dated **What's new** list, papers and Play. Swipe the sheet down to dismiss it. Updates are logged in [`src/shell/catalog.ts`](src/shell/catalog.ts). Sort by newest, A–Z or shelf. Every toy has a **Tune** panel (top right) with live sliders, a **Based on** list linking the papers and reference code it uses, a **Clip** button that records 8 s to share, a sound toggle, and an FPS readout (top centre).
+## The menu
 
-**Sound.** Every toy has procedural sound: [`src/shell/sound.ts`](src/shell/sound.ts) synthesises 14 one-shot voices (pop, squish, boing, thud, knock, tick, snap, rip, splash, whoosh, crumble, sizzle, chime, plop) and 5 filtered loops (hiss, rumble, trickle, crackle, bubble) with Web Audio, so there are no audio files. Toys drive pitch, loudness and stereo position from the physics, such as impact strength, body size, pour rate or stir speed. Haptics fire alongside on iOS and Android.
+<img src="docs/media/bobo-menu.gif" alt="The bobo hub: New carousel, Updated row, a toy sheet with What's new, swipe to dismiss" width="300" align="right">
+
+The hub shows each toy as a live preview card. **New** and **Updated** rows sit at the top, and updated toys say what changed right on the card; a yellow or blue dot marks them in the grid. Tap a toy for its sheet: description, a dated **What's new** list, papers and Play. Swipe the sheet down to dismiss it. Sort by newest, A–Z or shelf; previews can be set to Auto, Wi-Fi only or Off. Updates are logged in [`src/shell/catalog.ts`](src/shell/catalog.ts).
+
+Inside a toy there's a **Tune** panel (top right) with live sliders and a **Based on** list linking the papers and reference code it uses. There's also a **Clip** button that records 8 s to share, a sound toggle, and an FPS readout (top centre).
+
+<br clear="right">
+
+## Sound
+
+Every toy has procedural sound: [`src/shell/sound.ts`](src/shell/sound.ts) synthesises 14 one-shot voices (pop, squish, boing, thud, knock, tick, snap, rip, splash, whoosh, crumble, sizzle, chime, plop) and 5 filtered loops (hiss, rumble, trickle, crackle, bubble) with Web Audio, so there are no audio files. Toys drive pitch, loudness and stereo position from the physics, such as impact strength, body size, pour rate or stir speed. Haptics fire alongside on iOS and Android.
 
 Play it: https://bobo-ashy-ten.vercel.app. Deploys are manual for now: `npx vercel deploy --prod --archive=tgz` (auto-deploy stopped when the repo moved to ai-asylum).
 

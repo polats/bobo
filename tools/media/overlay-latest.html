@@ -1,0 +1,76 @@
+<!doctype html><html><head><style>
+html,body{margin:0;background:transparent;font-family:-apple-system,"SF Pro Rounded",ui-rounded,sans-serif}
+.wrap{position:relative;width:1200px;height:640px}
+.title{position:absolute;left:0;top:0;width:480px;height:320px;background:linear-gradient(135deg,#ff7ab6,#8b5cf6 55%,#22d3ee);overflow:hidden}
+.title svg{position:absolute;left:10px;top:30px;width:170px;height:170px}
+.title h1{position:absolute;left:182px;top:44px;margin:0;font-size:88px;font-weight:800;letter-spacing:-5px;color:#fff;text-shadow:0 4px 18px rgba(40,0,60,.35)}
+.title .k{position:absolute;left:186px;top:28px;font-size:13px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#fff;opacity:.85}
+.title p{position:absolute;left:28px;top:212px;right:24px;margin:0;font-size:21px;font-weight:750;color:#fff;line-height:1.35}
+.title p span{display:block;font-size:14.5px;font-weight:600;opacity:.88;margin-top:4px}
+.lab{position:absolute;padding:5px 10px;border-radius:99px;background:rgba(8,8,14,.66);color:#fff;font-size:15px;font-weight:750;letter-spacing:-.2px;white-space:nowrap}
+.chip{position:absolute;padding:4px 8px;border-radius:99px;font-size:11px;font-weight:850;letter-spacing:.1em;text-transform:uppercase;color:#111}
+.new{background:#ffd166}.upd{background:#7cc4ff}
+.note{position:absolute;padding:3px 8px;border-radius:8px;background:rgba(8,8,14,.55);color:#fff;font-size:12px;font-weight:600;white-space:nowrap}
+.v{position:absolute;width:0;border-left:2px solid rgba(7,7,11,.9)}
+.h{position:absolute;height:0;border-top:2px solid rgba(7,7,11,.9)}
+</style></head><body><div class="wrap" id="wrap">
+<div class="title"><svg viewBox="0 0 1024 1024"><defs>
+  <radialGradient id="body" cx="38%" cy="30%" r="75%">
+    <stop offset="0" stop-color="#fff3fb"/>
+    <stop offset="0.28" stop-color="#ff9ccf"/>
+    <stop offset="0.75" stop-color="#ff4f9e"/>
+    <stop offset="1" stop-color="#c2256f"/>
+  </radialGradient>
+  <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+    <stop offset="0" stop-color="#1a0630" stop-opacity="0.45"/>
+    <stop offset="1" stop-color="#1a0630" stop-opacity="0"/>
+  </radialGradient>
+</defs>
+<ellipse cx="512" cy="792" rx="300" ry="54" fill="url(#shadow)"/>
+<path d="M512 196c170 0 300 130 316 300 10 104-8 198-58 250-44 46-130 58-258 58s-214-12-258-58c-50-52-68-146-58-250 16-170 146-300 316-300z" fill="url(#body)"/>
+<ellipse cx="400" cy="330" rx="92" ry="54" transform="rotate(-28 400 330)" fill="#fff" opacity="0.75"/>
+<ellipse cx="344" cy="404" rx="22" ry="16" fill="#fff" opacity="0.6"/>
+<ellipse cx="428" cy="560" rx="40" ry="54" fill="#2a0a2e"/>
+<ellipse cx="596" cy="560" rx="40" ry="54" fill="#2a0a2e"/>
+<circle cx="442" cy="540" r="14" fill="#fff"/>
+<circle cx="610" cy="540" r="14" fill="#fff"/>
+<path d="M470 650q42 34 84 0" fill="none" stroke="#2a0a2e" stroke-width="16" stroke-linecap="round"/>
+<ellipse cx="352" cy="640" rx="40" ry="22" fill="#ff2f86" opacity="0.45"/>
+<ellipse cx="672" cy="640" rx="40" ry="22" fill="#ff2f86" opacity="0.45"/>
+</svg><div class="k">What's new</div><h1>bobo</h1><p>6 new toys and 3 upgrades<span>and every toy now has procedural sound</span></p></div>
+</div><script>
+// Keep in sync with cover-latest.mjs: 5×2 cells of 240×320, the title spans the first two.
+const CW = 240, CH = 320;
+const cells = [
+  ['Dig Down', 'new', 'soil caves in when undercut'],
+  ['Spool Sort', 'new', 'reel colours out of a knit'],
+  ['Jelly Merge', 'new', 'smoosh, then pop'],
+  ['Marbling Tray', 'new', 'comb inks into ebru'],
+  ['Power Rinse', 'new', 'blast the grime off'],
+  ['Sand Jar', 'new', 'layered sand art'],
+  ['Campfire', 'upd', 'oxygen + a glass jar'],
+  ['Demolition Tower', 'upd', 'rubble that settles'],
+];
+const wrap = document.getElementById('wrap');
+const add = (cls, text, x, y) => { const e = document.createElement('div'); e.className = cls; e.textContent = text; e.style.left = x + 'px'; e.style.top = y + 'px'; wrap.append(e); };
+cells.forEach(([t, kind, note], i) => {
+  const c = i + 2, x = (c % 5) * CW, y = Math.floor(c / 5) * CH;
+  add('chip ' + kind, kind === 'new' ? 'New' : 'Updated', x + 10, y + 10);
+  add('lab', t, x + 10, y + CH - 62);
+  add('note', note, x + 10, y + CH - 30);
+});
+for (let c = 1; c < 5; c++) {
+  const v = document.createElement('i');
+  v.className = 'v';
+  v.style.left = c * CW - 1 + 'px';
+  v.style.top = (c < 2 ? CH : 0) + 'px';
+  v.style.height = (c < 2 ? CH : 2 * CH) + 'px';
+  wrap.append(v);
+}
+const h = document.createElement('b');
+h.className = 'h';
+h.style.top = CH - 1 + 'px';
+h.style.left = '0px';
+h.style.width = 5 * CW + 'px';
+wrap.append(h);
+</script></body></html>
