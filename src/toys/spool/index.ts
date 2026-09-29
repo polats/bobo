@@ -108,6 +108,7 @@ class SpoolSort implements ToyInstance {
   private time = 0;
   private yarnLoop;
   private lastTick = 0;
+  private stuck = 0;
 
   constructor(private ctx: ToyContext) {
     const g = ctx.canvas.getContext('2d', { alpha: false });
@@ -123,6 +124,8 @@ class SpoolSort implements ToyInstance {
       (window as unknown as Record<string, unknown>).__spool = () => ({
         left: this.total - this.cleared,
         spools: this.spools.map((s) => s && `${s.color}:${s.count}/${s.capacity}`),
+        open: [...this.openColors().keys()],
+        pic: this.pic.name,
       });
   }
 
@@ -228,15 +231,35 @@ class SpoolSort implements ToyInstance {
     };
   }
 
-  /** The colour most in need of a spool: stitches left minus room already on the rack. */
+  /**
+   * The colour most in need of a spool. Colours you can reach right now come first, so the rack
+   * never fills up with colours buried higher in the picture; then whatever has the most stitches
+   * left beyond the room already on the rack.
+   */
   private pickColor(): string | null {
     const left = new Map<string, number>();
+    const open = this.openColors();
     for (let k = 0; k < this.total; k++) if (this.state[k] === 1 && !this.claimed[k]) left.set(this.color[k], (left.get(this.color[k]) ?? 0) + 1);
-    for (const s of this.spools) if (s && s.popT < 0) left.set(s.color, (left.get(s.color) ?? 0) - (s.capacity - s.count));
+    const room = new Map<string, number>();
+    for (const s of this.spools) if (s && s.popT < 0) room.set(s.color, (room.get(s.color) ?? 0) + s.capacity - s.count);
     let best: string | null = null;
-    let bestN = 0;
-    for (const [c, n] of left) if (n > bestN) [best, bestN] = [c, n];
+    let bestScore = 0;
+    for (const [c, n] of left) {
+      const need = n - (room.get(c) ?? 0);
+      if (need <= 0) continue;
+      const reachable = (open.get(c) ?? 0) > 0 && !room.has(c);
+      const score = need + (reachable ? 10_000 : 0);
+      if (score > bestScore) [best, bestScore] = [c, score];
+    }
     return best;
+  }
+
+  /** Exposed, unclaimed stitches per colour: what a tap could reel in right now. */
+  private openColors() {
+    const open = new Map<string, number>();
+    for (let k = 0; k < this.total; k++)
+      if (this.state[k] === 1 && !this.claimed[k] && this.exposed(k)) open.set(this.color[k], (open.get(this.color[k]) ?? 0) + 1);
+    return open;
   }
 
   private spoolRect(slot: number): [number, number, number, number] {
@@ -430,6 +453,34 @@ class SpoolSort implements ToyInstance {
         if (s.count > 0) this.finishSpool(slot);
         else s.popT = 0.2;
       }
+    }
+    this.unstick(dt);
+  }
+
+  /**
+   * Never let the rack jam: if no spool matches any colour you can reach and nothing is reeling,
+   * the emptiest spool of an unreachable colour slides away to make room for one you can use.
+   */
+  private unstick(dt: number) {
+    const racked = this.spools.filter((s): s is Spool => !!s && s.popT < 0);
+    const settled = racked.length === SLOTS && racked.every((s) => s.enter >= 1 && s.head < 0 && !s.queue.length && !s.rope);
+    const open = settled ? this.openColors() : null;
+    if (!open || !open.size || racked.some((s) => open.has(s.color))) {
+      this.stuck = 0;
+      return;
+    }
+    this.stuck += dt;
+    if (this.stuck < 0.6) return;
+    this.stuck = 0;
+    let slot = -1;
+    this.spools.forEach((s, i) => {
+      if (s && s.popT < 0 && (slot < 0 || s.count < this.spools[slot]!.count)) slot = i;
+    });
+    const s = this.spools[slot]!;
+    if (s.count > 0) this.finishSpool(slot);
+    else {
+      s.popT = 0.2;
+      this.ctx.sound.play('whoosh', { pitch: 1.2, gain: 0.3, pan: this.pan(slot) });
     }
   }
 
