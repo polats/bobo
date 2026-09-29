@@ -2,6 +2,7 @@ import UIKit
 import Capacitor
 import WebKit
 import CoreHaptics
+import AVFoundation
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
@@ -28,6 +29,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 class BoboViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(BoboHapticsPlugin())
+        bridge?.registerPluginInstance(BoboMicPlugin())
         #if DEBUG
         // Debug-only launch hooks for device testing from the Mac:
         //   devicectl ... launch --environment-variables '{"BOBO_TOY":"goo","BOBO_AUTOPLAY":"1"}'
@@ -116,5 +118,112 @@ public class BoboHapticsPlugin: CAPPlugin, CAPBridgedPlugin {
             player = nil
             running = false
         }
+    }
+}
+
+/// Microphone features for toys (blowing, singing): loudness, pitch and how voiced the sound is,
+/// computed on the device from an AVAudioEngine tap and sent to the page ~40 times a second.
+/// Nothing is recorded or stored. Native because WKWebView's Web Audio input reads silence.
+@objc(BoboMicPlugin)
+public class BoboMicPlugin: CAPPlugin, CAPBridgedPlugin {
+    public let identifier = "BoboMicPlugin"
+    public let jsName = "BoboMic"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
+    ]
+    private let engine = AVAudioEngine()
+    private var running = false
+    private var saved: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
+
+    @objc func start(_ call: CAPPluginCall) {
+        AVAudioSession.sharedInstance().requestRecordPermission { granted in
+            DispatchQueue.main.async {
+                guard granted else { return call.resolve(["granted": false]) }
+                do {
+                    try self.begin()
+                    call.resolve(["granted": true])
+                } catch {
+                    call.reject("Microphone failed to start: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    @objc func stop(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.end()
+            call.resolve()
+        }
+    }
+
+    private func begin() throws {
+        if running { return }
+        let session = AVAudioSession.sharedInstance()
+        saved = (session.category, session.mode, session.categoryOptions)
+        // Keep toy sounds on the loudspeaker and mixed with other audio while listening. Measurement
+        // mode turns off automatic gain, so a harder blow really reads louder.
+        try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .mixWithOthers, .allowBluetoothA2DP])
+        try session.setActive(true)
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        let rate = format.sampleRate
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            guard let self, let data = buffer.floatChannelData?[0] else { return }
+            let f = BoboMicPlugin.features(data, count: Int(buffer.frameLength), rate: rate)
+            self.notifyListeners("frame", data: ["rms": f.rms, "pitch": f.pitch, "clarity": f.clarity])
+        }
+        engine.prepare()
+        try engine.start()
+        running = true
+    }
+
+    private func end() {
+        guard running else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        running = false
+        if let (category, mode, options) = saved {
+            try? AVAudioSession.sharedInstance().setCategory(category, mode: mode, options: options)
+        }
+    }
+
+    override public func load() {
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.end() }
+    }
+
+    /// RMS, and pitch plus clarity from a normalised autocorrelation on a 4x-decimated signal
+    /// (70-1000 Hz). Blowing is loud with low clarity; a sung note has high clarity.
+    static func features(_ x: UnsafePointer<Float>, count: Int, rate: Double) -> (rms: Double, pitch: Double, clarity: Double) {
+        var sum: Float = 0
+        for i in 0..<count { sum += x[i] * x[i] }
+        let rms = Double(sqrt(sum / Float(max(1, count))))
+        let n = count / 4
+        if n < 64 { return (rms, 0, 0) }
+        var d = [Float](repeating: 0, count: n)
+        for i in 0..<n { d[i] = (x[i * 4] + x[i * 4 + 1] + x[i * 4 + 2] + x[i * 4 + 3]) * 0.25 }
+        let sr = rate / 4
+        let minLag = max(2, Int(sr / 1000)), maxLag = min(n / 2, Int(sr / 70))
+        var e0: Float = 0
+        for i in 0..<(n - maxLag) { e0 += d[i] * d[i] }
+        if e0 < 1e-9 { return (rms, 0, 0) }
+        var r = [Float](repeating: 0, count: maxLag + 1)
+        var best: Float = 0
+        for lag in minLag...maxLag {
+            var c: Float = 0, e1: Float = 0
+            for i in 0..<(n - maxLag) {
+                c += d[i] * d[i + lag]
+                e1 += d[i + lag] * d[i + lag]
+            }
+            r[lag] = c / sqrt(e0 * e1 + 1e-12)
+            best = max(best, r[lag])
+        }
+        // The shortest lag nearly as periodic as the best, so a note isn't read an octave low.
+        var bestLag = 0
+        for lag in (minLag + 1)..<maxLag where r[lag] >= best * 0.92 && r[lag] >= r[lag - 1] && r[lag] >= r[lag + 1] {
+            bestLag = lag
+            break
+        }
+        return (rms, bestLag > 0 ? sr / Double(bestLag) : 0, Double(max(0, best)))
     }
 }

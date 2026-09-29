@@ -38,4 +38,6 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Blowing and singing into the mic in some toys; analysed on the device, never recorded. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 </manifest>

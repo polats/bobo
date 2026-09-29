@@ -132,6 +132,7 @@ class Campfire implements ToyInstance {
     this.gl = gl;
     this.crackle = ctx.sound.loop('crackle');
     this.roar = ctx.sound.loop('rumble');
+    ctx.mic.offer('Blow at the bottom of the phone to feed the fire');
     this.steam = ctx.sound.loop('hiss');
     const vert = compile(gl, gl.VERTEX_SHADER, F.baseVert);
     const mk = (src: string) => new Program(gl, vert, src);
@@ -302,6 +303,7 @@ class Campfire implements ToyInstance {
 
   frame(dt: number, t: number) {
     this.handleInput(dt);
+    this.breath(dt);
     this.updateJar(dt);
     this.wind *= Math.exp(-dt * 1.5);
     this.gust *= Math.exp(-dt * 1.2);
@@ -486,6 +488,15 @@ class Campfire implements ToyInstance {
       this.ctx.sound.play('whoosh', { gain: 0.15, pitch: 1.3, pan: (j.x - 0.5) * 1.2 });
     }
     this.jar = b.jar = null;
+  }
+
+  /** Blowing into the mic: fresh air and an updraft into the base of the fire, as if you knelt and blew. */
+  private breath(dt: number) {
+    const b = this.ctx.mic.blow;
+    if (b < 0.05) return;
+    for (let k = 0; k < 5; k++) this.burn.breathe(0.3 + k * 0.1, 0.14, 0.09, b * dt * 1.6);
+    this.gust = Math.min(1.5, this.gust + b * dt * 2);
+    this.splat(this.velocity, 0.5, 0.06, (Math.random() - 0.5) * 200, b * 900, [0, 0, 0], 0.5);
   }
 
   private splat(target: DoubleTarget, x: number, y: number, vx: number, vy: number, color: [number, number, number], radius: number) {

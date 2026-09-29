@@ -12,6 +12,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BoboHapticsPlugin.class);
+        registerPlugin(BoboMicPlugin.class);
         super.onCreate(savedInstanceState);
         // Debuggable builds only: `adb shell am start -n com.polats.bobo/.MainActivity --es BOBO_TOY goo --ez BOBO_AUTOPLAY true`
         // opens a toy with the autoplay finger, mirroring the iOS launch hooks used by device soaks.

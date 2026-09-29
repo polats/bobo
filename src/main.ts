@@ -3,7 +3,8 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Panel } from './shell/panel';
 import { Pointers } from './shell/pointers';
 import { mountHub } from './shell/hub';
-import { soundIcon } from './shell/icons';
+import { micIcon, soundIcon } from './shell/icons';
+import { mic } from './shell/mic';
 import { hapticFrame, hapticLevel, hapticStop, hapticTier } from './shell/haptics';
 import { onSoundChange, setSoundEnabled, sound, soundEnabled, unlockSound } from './shell/sound';
 import type { Toy, ToyInstance } from './shell/types';
@@ -55,10 +56,30 @@ function mountToy(toy: Toy): () => void {
   };
   showMute(soundEnabled());
   const offSound = onSoundChange(showMute);
+  // The mic button only appears for toys that offer it; tapping it asks for permission once.
+  let micHint = '';
+  const micBtn = hudButton('', 'hud-mic', async () => {
+    if (mic.active) {
+      mic.stop();
+    } else {
+      const ok = await mic.start();
+      toast(stage, ok ? micHint : 'The microphone isn’t available');
+    }
+    micBtn.innerHTML = micIcon(mic.active);
+    micBtn.classList.toggle('on', mic.active);
+  });
+  micBtn.innerHTML = micIcon(false);
+  micBtn.hidden = true;
+  const micCtx = Object.assign(mic, {
+    offer(hint: string) {
+      micHint = hint;
+      micBtn.hidden = false;
+    },
+  });
   const fps = document.createElement('div');
   fps.className = 'hud-fps';
   const meter = makeMeter();
-  stage.append(canvas, overlay, back, tune, clip, mute, fps, meter.el);
+  stage.append(canvas, overlay, back, tune, clip, mute, micBtn, fps, meter.el);
   app.appendChild(stage);
 
   const panel = new Panel(stage);
@@ -86,7 +107,7 @@ function mountToy(toy: Toy): () => void {
 
   console.log(`[bobo] creating ${toy.id}`);
   toy
-    .create({ canvas, overlay, panel, pointers, pixelRatio, setStatus: (s) => (status = s), sound, haptic, hapticLevel, progress: meter.set, celebrate: (msg) => celebrate(stage, msg) })
+    .create({ canvas, overlay, panel, pointers, pixelRatio, setStatus: (s) => (status = s), sound, haptic, hapticLevel, mic: micCtx, progress: meter.set, celebrate: (msg) => celebrate(stage, msg) })
     .then((inst) => {
       if (!alive) return inst.destroy();
       instance = inst;
@@ -145,6 +166,7 @@ function mountToy(toy: Toy): () => void {
     pointers.destroy();
     offSound();
     hapticStop();
+    mic.stop();
     instance?.destroy();
   };
 }
@@ -197,6 +219,16 @@ function makeMeter() {
       el.classList.toggle('done', f >= 1);
     },
   };
+}
+
+/** A short message pill over the toy. */
+function toast(stage: HTMLElement, message: string) {
+  const t = document.createElement('div');
+  t.className = 'hud-toast';
+  t.textContent = message;
+  stage.appendChild(t);
+  t.animate([{ opacity: 0, transform: 'translate(-50%, 8px)' }, { opacity: 1, transform: 'translate(-50%, 0)' }], { duration: 220 });
+  setTimeout(() => (t.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400 }).onfinish = () => t.remove()), 2200);
 }
 
 /** Confetti, a toast and a heavy haptic: the shared "you did it" beat. */

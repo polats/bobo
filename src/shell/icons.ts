@@ -69,3 +69,9 @@ export function soundIcon(on: boolean) {
   const speaker = '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z"/>';
   return on ? svg(`${speaker}<path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/>`) : svg(`${speaker}<path d="m16 9.5 5 5"/><path d="m21 9.5-5 5"/>`);
 }
+
+/** Microphone, struck through when off. */
+export function micIcon(on: boolean) {
+  const body = '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v2.5"/>';
+  return svg(on ? body : `${body}<path d="m4 4 16 16"/>`);
+}

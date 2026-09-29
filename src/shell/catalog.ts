@@ -65,11 +65,12 @@ const UPDATES: Record<string, Update[]> = {
   ],
   dig: [{ date: '2026-09-29T18:54:53-04:00', note: 'Ground that loses its support breaks free as rigid slabs that fall, tumble and shatter; boulders drop and roll, finds can be buried again.' }],
   foundry: [{ date: '2026-09-29T18:46:29-04:00', note: 'Rings from its own shape: seams and voids, and where you tap, change the note. Metal now rises into bottom-fed moulds.' }],
-  fire: [{ date: '2026-09-29T12:34:05-04:00', note: 'Oxygen: drop a glass jar over the fire to choke it to embers, lift it for a whoosh of flame. Blowing feeds the fire air.' }, SOUND],
+  fire: [{ date: '2026-09-29T19:12:12-04:00', note: 'Blow into the mic (tap the mic button) and your breath feeds the fire: it brightens and roars.' }, { date: '2026-09-29T12:34:05-04:00', note: 'Oxygen: drop a glass jar over the fire to choke it to embers, lift it for a whoosh of flame. Blowing feeds the fire air.' }, SOUND],
   demolition: [
     { date: '2026-09-29T12:36:24-04:00', note: 'The wrecking ball now knocks sleeping towers apart, rubble stops rolling, and tall stacks stand still.' },
     SOUND,
   ],
+  prints: [{ date: '2026-09-29T19:12:12-04:00', note: 'Blow into the mic to clear the loose powder off the print.' }],
   goo: [{ date: '2026-09-29T12:34:05-04:00', note: 'Snow and sand glitter: each grain catches the light as it tumbles (toggle in Tune).' }, SOUND],
 };
 

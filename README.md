@@ -66,6 +66,10 @@ Taps and hits use `ctx.haptic()`. For feel that runs *with* the action, toys cal
 
 The app logs its tier at start (`[bobo] haptics: core-haptics`).
 
+## Microphone
+
+Toys can listen for breath and song. A toy calls `ctx.mic.offer(hint)` and a mic button appears in its HUD; nothing listens until the player taps it, and it stops when the toy closes or the app goes to the background. [`src/shell/mic.ts`](src/shell/mic.ts) turns three raw features — loudness, pitch, and how periodic the sound is (a normalised autocorrelation peak) — into `ctx.mic.blow` (loud and unvoiced: breath is turbulent noise), `ctx.mic.level` and `ctx.mic.pitch` (only for a clear note). The features come from a native `BoboMic` plugin (an `AVAudioEngine` tap on iOS, where the web view's audio input reads silence; `AudioRecord` on Android) or from `getUserMedia` in a browser. Audio is analysed on the device and never recorded or sent. Campfire (blow to feed the fire) and Fingerprint Dust (blow the powder away) use it so far.
+
 Play it: https://bobo-ashy-ten.vercel.app. Deploys are manual for now: `npx vercel deploy --prod --archive=tgz` (auto-deploy stopped when the repo moved to ai-asylum).
 
 ## Gallery

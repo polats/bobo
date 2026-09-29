@@ -169,6 +169,7 @@ class FingerprintDust implements ToyInstance {
   readonly cfg = { brush: 24, blow: 70 };
 
   constructor(private ctx: ToyContext) {
+    ctx.mic.offer('Blow on the print to clear the loose powder');
     const gl = ctx.canvas.getContext('webgl2', { alpha: false, antialias: true, depth: true, stencil: true, preserveDrawingBuffer: false });
     if (!gl) throw new Error('WebGL2 is not available on this device.');
     this.gl = gl;
@@ -853,6 +854,16 @@ class FingerprintDust implements ToyInstance {
     if (!brushing) {
       this.brushVis[3] = Math.max(0, this.brushVis[3] - dt * 6);
       this.brushSpeed *= Math.max(0, 1 - dt * 8);
+    }
+    // Blowing into the mic clears loose powder off the print, like a puff of real breath.
+    const breath = this.ctx.mic.blow;
+    if (breath > 0.06 && !blowing) {
+      const power = 0.8 + breath * 1.4;
+      blowing = true;
+      this.blowAt[0] = this.printAt[0] * cell;
+      this.blowAt[1] = this.printAt[1] * cell;
+      this.blowAt[2] = power;
+      p.blow(this.printAt[0], this.printAt[1], ((this.cfg.blow * pr) / cell) * 1.6, dt, power);
     }
     const b = this.blowAt;
     if (blowing) {
