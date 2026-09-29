@@ -1,7 +1,7 @@
 // Records each toy with autoplay input via CDP screencast into frames/<toy>/ as JPEGs + timestamps.
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool', 'dig'];
+const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints'];
 const WARM = 1500, DUR = 8400;
 // Capture size: 360×480 (3:4) matches the hub's preview cards; scripted moves were authored at 300×375.
 const VW = Number(process.env.VW ?? 360), VH = Number(process.env.VH ?? 480);
@@ -62,6 +62,81 @@ const scripts = {
     await tool('Water'); await pour(250, 60, 900, -40);
     await wait(900);
     await tool('Poke'); await pour(30, 300, 1500, 240);
+  },
+  // Wave 3 and the theme toys drive their dev hooks on the raw 360×480 page.
+  async knockdown(q) {
+    const p = q.raw;
+    await wait(500);
+    for (const [x, dx] of [[180, -14], [180, 16], [180, 0]]) {
+      await p.mouse.move(x, 380); await p.mouse.down();
+      for (let i = 1; i <= 10; i++) { await p.mouse.move(x - (dx * i) / 10, 380 + i * 8); await wait(16); }
+      await p.mouse.up();
+      await wait(1900);
+    }
+  },
+  async peel(q) {
+    const p = q.raw;
+    await wait(300);
+    const t = await p.evaluate(() => window.__peel.tab());
+    const tx = 360 - t.x, ty = 480 - t.y;
+    await p.mouse.move(t.x, t.y); await p.mouse.down();
+    for (let i = 1; i <= 110; i++) { await p.mouse.move(t.x + ((tx - t.x) * i) / 110, t.y + ((ty - t.y) * i) / 110); await wait(55); }
+    await p.mouse.up();
+  },
+  async pour(q) {
+    const p = q.raw;
+    await wait(400);
+    const moves = (await p.evaluate(() => window.__pour.solve())) ?? [];
+    for (const [a, b] of moves.slice(0, 5)) {
+      for (const i of [a, b]) {
+        const [x, y] = await p.evaluate((k) => window.__pour.tubeXY(k), i);
+        await p.mouse.click(x, y);
+        await wait(250);
+      }
+      await wait(1100);
+    }
+  },
+  async mow(q) {
+    const p = q.raw;
+    await wait(300);
+    let y = 150;
+    await p.mouse.move(40, y); await p.mouse.down();
+    for (let row = 0; row < 5; row++, y += 38) {
+      const [x0, x1] = row % 2 ? [320, 40] : [40, 320];
+      for (let i = 0; i <= 24; i++) { await p.mouse.move(x0 + ((x1 - x0) * i) / 24, y); await wait(40); }
+      for (let i = 1; i <= 4; i++) { await p.mouse.move(x1, y + (38 * i) / 4); await wait(30); }
+    }
+    await p.mouse.up();
+  },
+  async foundry(q) {
+    const p = q.raw;
+    await wait(300);
+    await p.mouse.move(180, 160); await p.mouse.down();
+    await wait(3600);
+    await p.mouse.up();
+    await wait(1600);
+    for (let i = 0; i < 4; i++) { await p.mouse.click(180, 330); await wait(260); }
+    await wait(900);
+    await p.mouse.click(180, 380);
+  },
+  async 'ink-letter'() {
+    // The first letter sways over the candle on its own for 6.5 s, which is the hook.
+  },
+  async kintsugi(q) {
+    const p = q.raw;
+    await wait(2300); // it drops and shatters on its own
+    await p.evaluate(() => window.__kintsugiSolve());
+  },
+  async prints(q) {
+    const p = q.raw;
+    await wait(300);
+    const r = await p.evaluate(() => window.__prints.print());
+    await p.mouse.move(r.x - r.w, r.y - r.h); await p.mouse.down();
+    for (let k = 0; k < 7; k++) {
+      const yy = r.y - r.h + ((2 * r.h) * k) / 6;
+      for (let i = 0; i <= 12; i++) { await p.mouse.move(r.x + (k % 2 ? 1 : -1) * r.w * (1 - (2 * i) / 12), yy); await wait(28); }
+    }
+    await p.mouse.up();
   },
   async dig(p) {
     // Dig a pit under the lawn, tunnel sideways to undercut it, then drill down.

@@ -9,9 +9,9 @@ import { pickFrames, resize, writeGif } from './gif.mjs';
 const FPS = Number(process.env.FPS ?? 10), SECONDS = 8, N = Math.round(FPS * SECONDS);
 const W = 1200, H = 640, CW = 240, CH = 320;
 // Same order as overlay-latest.html; cells are row-major after the two-cell title.
-const toys = ['dig', 'spool', 'merge', 'marble', 'rinse', 'sandjar', 'fire', 'demolition'];
+const toys = ['knockdown', 'peel', 'pour', 'foundry', 'ink-letter', 'kintsugi', 'mow', 'prints'];
 // Where the interesting part of each 8 s capture starts, so short clips show the action.
-const START = { demolition: 0, merge: 0 };
+const START = { kintsugi: 2.4 };
 
 const b = await chromium.launch({ channel: 'chrome' });
 const p = await b.newPage({ viewport: { width: W, height: H } });

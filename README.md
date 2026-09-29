@@ -1,12 +1,12 @@
 # bobo
 
-![bobo — what's new: Dig Down, Spool Sort, Jelly Merge, Marbling Tray, Power Rinse, Sand Jar, and upgraded Campfire and Demolition Tower](docs/media/bobo-latest.gif)
+![bobo — what's new: Knockdown, Peel It, Pour Sort, Foundry, Invisible Ink, Kintsugi, Mow Lines and Fingerprint Dust](docs/media/bobo-latest.gif)
 
-A physics sandbox of 18 small toys built on novel, satisfying, performant simulations (liquid, particles, cloth, yarn, soft bodies, sand, dirt), tuned for juicy visuals and sound. It runs in the browser and as an iOS and Android app.
+A physics sandbox of 26 small toys built on novel, satisfying, performant simulations (liquid, particles, cloth, yarn, soft bodies, sand, dirt, molten metal, paper and film), tuned for juicy visuals and sound. It runs in the browser and as an iOS and Android app.
 
 ## Toys
 
-![All 18 toys](docs/media/bobo-cover.gif)
+![All 26 toys](docs/media/bobo-cover.gif)
 
 Grouped by the hub's shelves.
 
@@ -17,6 +17,7 @@ Grouped by the hub's shelves.
 | **Splash Tank** | A glass tank of 3D water: tilt the phone (or drag) to slosh it, poke it, drop beach balls, make a big splash. | 3D MLS-MPM + screen-space fluid rendering on WebGPU (`src/toys/splash`) |
 | **Campfire** | Stack logs, strike a match, blow on the embers; fire climbs the wood, chars it, and hisses when doused. An oxygen field feeds it: drop a glass jar over the flames and they choke to embers, then lift it for a whoosh of flame. | Stable-fluids fire (heat, smoke, buoyancy) + CPU burning and oxygen cells on WebGL2 (`src/toys/fire`) |
 | **Ferro Blob** | Drag a magnet under a dish of black ferrofluid: it crawls after you and bristles with spikes; two fingers split it, taps drop droplets. | Double-density particle liquid + Rosensweig spike lattice + chrome shading on WebGL2 (`src/toys/ferro`) |
+| **Pour Sort** | Liquid sort with real pouring: tap a tube, tap another, and a cohesive stream pours across. Liquids have densities, so oil floats up through syrup after a pour. Every level is solver-checked; undo any time. | Layer-stack logic + Clavet double-density particle stream on WebGL2 (`src/toys/pour`) |
 | **Goo Lab** | Pour water, jelly, snow and sand that all interact; poke and squish them. Snow and sand glitter as grains tumble. | 2D MLS-MPM on WebGPU compute, per-grain glints (`src/toys/goo`) |
 | **Jelly Stack** | Tap to drop gummy cubes, stars, hearts and a smiling Bobo; stack them, grab and fling, slap the tower over. | Shape-matching soft bodies + PBD contacts on WebGL2 (`src/toys/jelly`) |
 | **Jelly Merge** | Suika with gummies: drop jelly fruit into a jar; matching sizes smoosh together and pop into a bigger one (hit-stop, shockwave, combo pitch), all the way to a giant Bobo. | Jelly Stack's shape matching + merge rules on WebGL2 (`src/toys/merge`) |
@@ -27,9 +28,16 @@ Grouped by the hub's shelves.
 | **Alchemy Sandbox** | Falling-sand chemistry: fire, water, lava, acid, plants, ice, gunpowder and more react with each other. | Cellular automaton on CPU + WebGL2 glow (`src/toys/sand`) |
 | **Dig Down** | Scoop down through a backyard: soil holds until you undercut it, then caves in; clay holds tunnels, sand runs, water pockets drain, rock needs chipping. Dig up 12 buried finds for your shelf. | Falling-sand CA with span-based cohesion on Canvas 2D (`src/toys/dig`) |
 | **Demolition Tower** | Swing a wrecking ball, drop bombs or flick cannonballs into brick towers, pyramids and castles; blocks shatter into debris and dust. Rubble has rolling resistance and settles, and tall stacks stand still. | Pure-TS 2D rigid bodies (Box2D v3-style soft step, rolling resistance, shock propagation, island waking) + WebGL2 (`src/toys/demolition`) |
+| **Knockdown** | A fairground stall of tin cans, glass jars and wooden crates. Drag back the slingshot, watch the arc, and clear the shelves: glass shatters and splats jam, crates splinter, the last item gets slow-mo. | Demolition's rigid bodies with per-material bounce, baked Voronoi shatter and jam decals on WebGL2 (`src/toys/knockdown`) |
 | **Marbling Tray** | Drop inks on a bath, drag combs, rakes and a stylus into feathered ebru patterns, then lay paper to keep a print. | Mixwell analytic marbling brushes (SIGGRAPH 2026 Best Paper) on WebGL2 (`src/toys/marble`) |
 | **Power Rinse** | Blast a mud-caked Bobo statue, duck, gnome or mosaic clean; a "% clean" ring fills and hidden details appear. | Erodible mud and moss layers, runoff and spray on WebGL2 (`src/toys/rinse`) |
 | **Sand Jar** | Pour coloured sand through a funnel into a bottle, poke scallops, tilt the strata; or pour matching colours to reveal a hidden picture. | Sand-only falling-sand CA with picture targets on WebGL2 (`src/toys/sandjar`) |
+| **Peel It** | Peel a screen protector, a sticker, masking tape or a gadget's film. Roll it back slowly and it comes off clean; yank it and it tears, leaving a scrap to pick at. | XPBD film with per-vertex glue that lets go by the Kendall peel relation, on WebGL2 (`src/toys/peel`) |
+| **Mow Lines** | Mow a lawn into stripes: each pass leans the stubble your way, so neighbouring passes read light and dark. The motor bogs down in long grass; mind the flower beds, the stone and the cat. | Shell-texture grass with CPU length and lean maps on WebGL2 (`src/toys/mow`) |
+| **Foundry** | Pour glowing bronze into a sand mould, let it cool, smash the mould open, and ring what you cast. A steady pour rings true; a hesitant one leaves cold shuts and clunks. | Falling-sand CA with a hot, cooling metal cell and glow on Canvas 2D (`src/toys/foundry`) |
+| **Invisible Ink** | Hold a secret letter over a candle to bring out the hidden message, but keep it moving: the paper browns, chars and catches, and what burns is lost. | Heat, char and fire grid over a hidden-ink mask on WebGL2 (`src/toys/ink-letter`) |
+| **Kintsugi** | Drop a porcelain bowl, fit the shards back with a magnetic click, and pour gold that races along every crack. Mended pieces go on a shelf. | Voronoi fracture with shared seam lines, a 1D gold flow over the seam network, Canvas 2D (`src/toys/kintsugi`) |
+| **Fingerprint Dust** | Brush powder until hidden prints bloom, blow away the excess, lift the print with tape, and match it to a suspect's card. | Powder grains on a ridge-adhesion mask, Peel It's film for the tape, WebGL2 (`src/toys/prints`) |
 
 ## The menu
 
@@ -55,7 +63,9 @@ Play it: https://bobo-ashy-ten.vercel.app. Deploys are manual for now: `npx verc
 | ![Splash Tank](docs/media/splash.gif)<br>**Splash Tank** | ![Tear Sheet](docs/media/cloth.gif)<br>**Tear Sheet** | ![Laundry Line](docs/media/laundry.gif)<br>**Laundry Line** | ![Pull the Thread](docs/media/thread.gif)<br>**Pull the Thread** |
 | ![Campfire](docs/media/fire.gif)<br>**Campfire** | ![Jelly Stack](docs/media/jelly.gif)<br>**Jelly Stack** | ![Demolition Tower](docs/media/demolition.gif)<br>**Demolition Tower** | ![Ferro Blob](docs/media/ferro.gif)<br>**Ferro Blob** |
 | ![Marbling Tray](docs/media/marble.gif)<br>**Marbling Tray** | ![Jelly Merge](docs/media/merge.gif)<br>**Jelly Merge** | ![Power Rinse](docs/media/rinse.gif)<br>**Power Rinse** | ![Sand Jar](docs/media/sandjar.gif)<br>**Sand Jar** |
-| ![Spool Sort](docs/media/spool.gif)<br>**Spool Sort** | ![Dig Down](docs/media/dig.gif)<br>**Dig Down** |  |  |
+| ![Spool Sort](docs/media/spool.gif)<br>**Spool Sort** | ![Dig Down](docs/media/dig.gif)<br>**Dig Down** | ![Knockdown](docs/media/knockdown.gif)<br>**Knockdown** | ![Peel It](docs/media/peel.gif)<br>**Peel It** |
+| ![Pour Sort](docs/media/pour.gif)<br>**Pour Sort** | ![Mow Lines](docs/media/mow.gif)<br>**Mow Lines** | ![Foundry](docs/media/foundry.gif)<br>**Foundry** | ![Invisible Ink](docs/media/ink-letter.gif)<br>**Invisible Ink** |
+| ![Kintsugi](docs/media/kintsugi.gif)<br>**Kintsugi** | ![Fingerprint Dust](docs/media/prints.gif)<br>**Fingerprint Dust** |  |  |
 
 Captured in headless Chrome with [`tools/media`](tools/media).
 
@@ -65,7 +75,7 @@ Next up, from [docs/research/2026-directions.md](docs/research/2026-directions.m
 
 | Next | What | Builds on |
 |---|---|---|
-| **Continuous haptics** | A native Core Haptics bridge for load-driven vibration that follows the procedural sound layer | [shear-knit.md §2](docs/research/shear-knit.md) · [Core Haptics](https://developer.apple.com/documentation/corehaptics) |
+| **Continuous haptics** (next) | A Capacitor plugin with one API for load-driven vibration: Core Haptics on iOS; on Android, envelope effects (Android 16), amplitude waveforms, or composition primitives, by device | [shear-knit.md §2](docs/research/shear-knit.md) · [Core Haptics](https://developer.apple.com/documentation/corehaptics) · [Android custom haptics](https://developer.android.com/develop/ui/views/haptics/custom-haptic-effects) |
 | **Shear** | Clip the fleece off a sheep with shell fur and cut maps; the fleece peels off in one piece | Tear Sheet cutting, Laundry Line pins · [Lengyel et al. 2001](https://hhoppe.com/proj/fur/) |
 | **Rope & yarn ball** | Ropes, chains and a yarn ball that unspools and tangles as a cat bats it | Pull the Thread's yarn · [Cosserat rods](https://animation.rwth-aachen.de/publication/0550/) |
 | **Knit-a-Scarf** | Knit stitch by stitch from your own spun yarn, then dress the sheep | Pull the Thread's knit grid · [Stitch Meshes](https://www.cemyuksel.com/research/stitchmeshes/) |
@@ -118,6 +128,8 @@ mobile/                Capacitor iOS and Android build, install and FPS soak scr
 
 ## Docs
 
+- [docs/research/2026-wave3.md](docs/research/2026-wave3.md) — the wave 3 refresh: SIGGRAPH 2026 simulation papers, the 2026 charts (Smash Fest, sort and chore games), scored candidates and build specs for Knockdown, Peel It, Pour Sort and Mow Lines
+- [docs/research/2026-theme-toys.md](docs/research/2026-theme-toys.md) — theme-native toys from the theme-fit study (the theme *is* the physics): Foundry, Invisible Ink, Kintsugi and Fingerprint Dust
 - [docs/research/2026-tech.md](docs/research/2026-tech.md), [2026-scene.md](docs/research/2026-scene.md), [2026-directions.md](docs/research/2026-directions.md) — autumn 2026 graphics/physics research, the games scene, and the toy picks they led to (waves 1 and 2)
 - [docs/research/physics.md](docs/research/physics.md) — survey of real-time physics simulation techniques (Two Minute Papers, Ten Minute Physics, SIGGRAPH, etc.) and a backlog of sandbox toys to build
 - [docs/research/cloth-knitting.md](docs/research/cloth-knitting.md) — cloth, yarn and knitting simulation: techniques, yarn-level research and how to fake it, browser playgrounds, and ten cloth/knit toy ideas (e.g. unravel a sweater)
