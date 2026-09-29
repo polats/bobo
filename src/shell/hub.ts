@@ -341,30 +341,69 @@ export function mountHub(app: HTMLElement, toys: Toy[]): () => void {
   const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeSheets();
   document.addEventListener('keydown', onKey);
 
-  // Swipe a sheet down to dismiss it.
+  // Swipe a sheet down to dismiss it: from anywhere on the sheet while it's scrolled to the top.
+  // Touch events (not pointer events) so the browser's own scrolling can't cancel the drag.
   for (const sheet of [toySheet, filterSheet]) {
     let y0 = 0;
+    let t0 = 0;
     let dy = 0;
+    let dragging = false;
+    const setDrag = (d: number) => {
+      sheet.style.transform = d ? `translateY(${d}px)` : '';
+      scrim.style.transition = d ? 'none' : '';
+      scrim.style.opacity = d ? String(Math.max(0, 1 - d / Math.max(1, sheet.offsetHeight))) : '';
+    };
+    sheet.addEventListener(
+      'touchstart',
+      (e) => {
+        y0 = e.touches[0].clientY;
+        t0 = performance.now();
+        dy = 0;
+        dragging = false;
+      },
+      { passive: true },
+    );
+    sheet.addEventListener(
+      'touchmove',
+      (e) => {
+        const d = e.touches[0].clientY - y0;
+        if (!dragging && d > 8 && sheet.scrollTop <= 0) {
+          dragging = true;
+          sheet.classList.add('dragging');
+        }
+        if (!dragging) return;
+        e.preventDefault();
+        dy = Math.max(0, d);
+        setDrag(dy);
+      },
+      { passive: false },
+    );
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      sheet.classList.remove('dragging');
+      const velocity = dy / Math.max(1, performance.now() - t0); // px per ms
+      setDrag(0);
+      if (dy > 110 || (dy > 30 && velocity > 0.6)) closeSheets();
+    };
+    sheet.addEventListener('touchend', end);
+    sheet.addEventListener('touchcancel', end);
+    // Mouse / pen: drag the grabber area.
     sheet.addEventListener('pointerdown', (e) => {
-      if ((e.target as HTMLElement).closest('button, a, summary, video')) return;
+      if (e.pointerType === 'touch' || !(e.target as HTMLElement).closest('.grabber, .sheet-head')) return;
       y0 = e.clientY;
+      t0 = performance.now();
       dy = 0;
-      sheet.setPointerCapture(e.pointerId);
+      dragging = true;
       sheet.classList.add('dragging');
+      sheet.setPointerCapture(e.pointerId);
     });
     sheet.addEventListener('pointermove', (e) => {
-      if (!sheet.classList.contains('dragging')) return;
+      if (!dragging || e.pointerType === 'touch') return;
       dy = Math.max(0, e.clientY - y0);
-      sheet.style.transform = `translateY(${dy}px)`;
+      setDrag(dy);
     });
-    const end = () => {
-      if (!sheet.classList.contains('dragging')) return;
-      sheet.classList.remove('dragging');
-      sheet.style.transform = '';
-      if (dy > 90) closeSheets();
-    };
-    sheet.addEventListener('pointerup', end);
-    sheet.addEventListener('pointercancel', end);
+    sheet.addEventListener('pointerup', (e) => e.pointerType !== 'touch' && end());
   }
 
   render();

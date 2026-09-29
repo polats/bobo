@@ -165,13 +165,13 @@ html, body {
   box-shadow: 0 -0.5px 0 rgba(255, 255, 255, 0.18), 0 -20px 60px rgba(0, 0, 0, 0.5);
   transform: translateY(105%);
   transition: transform 0.34s cubic-bezier(0.2, 0.9, 0.25, 1);
-  touch-action: pan-y;
+  overscroll-behavior: contain;
 }
 .sheet.dragging { transition: none; }
 .sheet-open .sheet-scrim { opacity: 1; pointer-events: auto; }
 .sheet-open .sheet.active { transform: none; }
 .sheet:not(.active) { visibility: hidden; transition: transform 0.34s cubic-bezier(0.2, 0.9, 0.25, 1), visibility 0s linear 0.34s; }
-.grabber { width: 38px; height: 5px; margin: 0 auto 12px; border-radius: 3px; background: rgba(255, 255, 255, 0.3); }
+.grabber { width: 38px; height: 5px; margin: 0 auto 12px; border-radius: 3px; background: rgba(255, 255, 255, 0.3); cursor: grab; }
 .sheet .sheet-media { position: relative; inset: auto; aspect-ratio: 16 / 11; border-radius: 18px; overflow: hidden; background: #000; }
 .sheet h3 { margin: 14px 0 4px; font: 750 24px/1.1 ui-rounded, system-ui, sans-serif; letter-spacing: -0.02em; }
 .sheet-blurb { margin: 0; font-size: 15px; line-height: 1.4; color: #d9d4e0; }
