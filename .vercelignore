@@ -1,0 +1,10 @@
+# Keep deploy uploads small: only what the web build needs.
+node_modules
+dist
+.scratch
+artifacts
+mobile/out
+tools/media/frames
+tools/media/out
+android
+ios
