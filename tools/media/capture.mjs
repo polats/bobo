@@ -151,12 +151,17 @@ const scripts = {
     await wait(900);
     await stroke(Array.from({ length: 90 }, (_, i) => [150 + Math.sin(i / 4) * 50, 290 + Math.sin(i / 7) * 10]), 26);
   },
-  async spool(p) {
-    // Tap the four spools in turn so several yarns reel at once.
-    await wait(700);
-    for (let i = 0; i < 16; i++) {
-      await p.mouse.click([44, 115, 186, 257][i % 4], 314);
-      await wait(420);
+  async spool(q) {
+    // Hold the spools in turn: yarn tightens, stitches pull out, floats snag and slip free.
+    const p = q.raw;
+    await wait(500);
+    const st = (await p.evaluate(() => window.__spool())).strands;
+    for (const i of [1, 0, 2]) {
+      const s = st[i % st.length];
+      await p.mouse.move(s.sx, s.sy); await p.mouse.down();
+      await wait(2300);
+      await p.mouse.up();
+      await wait(150);
     }
   },
   async merge(p) {

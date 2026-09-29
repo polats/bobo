@@ -9,13 +9,13 @@ The physics in most of these toys is decoration on a rules-based game: the outco
 | Toy | Verdict | Novelty (1–5) | Tech (1–5) | Refs honest | Status |
 |---|---|:-:|:-:|:-:|---|
 | **Knockdown** | weak | 1.5 | 2 | partly | References and tech line corrected. |
-| **Spool Sort** | weak | 1.5 | 2 | partly | Being reworked: stranded-colourwork yarns under XPBD tension; snags and floats decide the order. |
-| **Dig Down** | weak | 2 | 2 | partly | Being reworked: Noita-style detached islands become rigid bodies; boulders and finds fall and roll. |
+| **Spool Sort** | weak | 1.5 | 2 | partly | Rebuilt: stranded-colourwork yarns under XPBD tension, floats that snag and slip free. |
+| **Dig Down** | weak | 2 | 2 | partly | Rebuilt: Noita-style detached islands become rigid bodies; boulders and finds fall and roll. |
 | **Kintsugi** | weak | 2 | 2 | partly | References and tech line corrected. |
 | **Pour Sort** | weak | 2 | 3 | partly | References and tech line corrected. |
 | **Mow Lines** | weak | 2 | 3 | yes | References already honest; unchanged. |
 | **Invisible Ink** | weak | 2 | 3 | partly | References and tech line corrected. |
-| **Foundry** | ok | 3 | 3 | partly | Being reworked: modal ringing from the cast shape, hydrostatic pressure, conservative heat. |
+| **Foundry** | ok | 3 | 3 | partly | Rebuilt: modal ringing from the cast shape, hydrostatic pressure, conservative heat. |
 | **Peel It** | ok | 3 | 3.5 | partly | References and tech line corrected. |
 | **Fingerprint Dust** | ok | 2 | 3 | yes | References already honest; unchanged. |
 
@@ -23,6 +23,25 @@ The physics in most of these toys is decoration on a rules-based game: the outco
 - References that did not match the code were removed or reworded (DeepFracture on Knockdown; the SIGGRAPH 2026 buoyancy paper and Rayleigh–Taylor on Pour Sort; the claim that Invisible Ink reuses Campfire's burn grid; "XPBD film" on Peel It; "cans roll away"). Verified papers were added where the code does use the idea: Müller, Chentanez & Kim 2013 (Knockdown, Kintsugi), Guendelman, Bridson & Fedkiw 2003 (Demolition Tower's shock propagation), Zhang et al. 2020 Complementary Dynamics (Jelly Stack, Jelly Merge). DOIs were checked against Crossref.
 - Foundry, Spool Sort and Dig Down are being rebuilt around the fixes below.
 - Knockdown is a candidate to cut, or to fold into Demolition Tower as a fairground mode.
+
+## Re-judged on simulation only (2026-09-30)
+
+The first pass above mixed in game-design criteria (challenge, puzzles, failure) that don't belong in bobo's goal. This pass scores only the simulation: how novel it is, whether what you see, hear and feel emerges from it and responds to *how* you interact, and how rich that sensory response is. Foundry, Spool Sort and Dig Down were scored after their rebuilds.
+
+| Toy | Verdict | Novelty | Emergent | Satisfying | Best next simulation upgrade | Effort |
+|---|---|:-:|:-:|:-:|---|:-:|
+| **Peel It** | strong | 4 | 4 | 4 | Replace the displacement threshold and the rate multiplier with a cohesive-zone adhesive: a per-vertex traction-separation law (bilinear, or PPR, Park-Paulino-Roesler 2009, JMPS) solved as an XPBD constraint with comp… | M |
+| **Foundry** | strong | 4 | 4 | 4 | Replace the falling-sand liquid and the head teleport with a real incompressible free-surface solve on the same cell grid | L |
+| **Dig Down** | strong | 3 | 3.5 | 4 | Replace the SPAN-distance support test and the TOUGH velocity-change shatter with a real quasi-static stress solve on the packed pixel grid | L |
+| **Fingerprint Dust** | ok | 3 | 3 | 4 | Replace the constant infinite-supply lay() and the tape snapshot with a small adhesion and transfer model | M |
+| **Spool Sort** | ok | 3 | 3 | 3 | Replace the grip() table and the give timer with contact-driven release | L |
+| **Pour Sort** | ok | 2.5 | 2.5 | 3.5 | Simulate the tube contents as particles too, and let the user drive the tilt | L |
+| **Mow Lines** | weak | 2 | 3 | 3.5 | Turn the lean map into a physical blade-state field: per-texel bend angle and direction, plus angular velocity, integrated as a damped spring toward upright with a stiffness that depends on blade length | M |
+| **Invisible Ink** | ok | 2 | 3 | 3 | Replace the linear threshold rates with Arrhenius kinetics and add a moisture channel | S |
+| **Knockdown** | weak | 1.5 | 2.5 | 3.5 | Replace the scripted z-axis knock-back with real rigid bodies that move in depth | L |
+| **Kintsugi** | weak | 2 | 2 | 3 | Make the break emerge from the impact | M |
+
+**Rebuilds.** Foundry now computes its ring from a 2D plane-stress FEM of the actual casting (shift-invert Lanczos, seams softened, voids removed) and fills bottom-gated moulds under a head; Dig Down turns unsupported ground into traced rigid bodies that fall, shatter and re-bake (the Noita recipe); Spool Sort pulls stranded-colourwork yarns through capstan-friction catches. Noted limits: Foundry's FEM is a flat cut-out, so a bell doesn't have true 3D bell partials; Spool Sort's release still uses a grip table rather than contact.
 
 ## Knockdown
 

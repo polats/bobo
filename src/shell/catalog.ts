@@ -63,6 +63,7 @@ const UPDATES: Record<string, Update[]> = {
     { date: '2026-09-29T18:46:29-04:00', note: 'Real yarn tension: each colour is its own strand; floats caught behind other colours drag the knit until they slip free with a snap.' },
     { date: '2026-09-29T11:57:26-04:00', note: 'The rack never jams: spools now bring colours you can reach.', minor: true },
   ],
+  dig: [{ date: '2026-09-29T18:54:53-04:00', note: 'Ground that loses its support breaks free as rigid slabs that fall, tumble and shatter; boulders drop and roll, finds can be buried again.' }],
   foundry: [{ date: '2026-09-29T18:46:29-04:00', note: 'Rings from its own shape: seams and voids, and where you tap, change the note. Metal now rises into bottom-fed moulds.' }],
   fire: [{ date: '2026-09-29T12:34:05-04:00', note: 'Oxygen: drop a glass jar over the fire to choke it to embers, lift it for a whoosh of flame. Blowing feeds the fire air.' }, SOUND],
   demolition: [
