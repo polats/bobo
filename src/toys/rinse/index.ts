@@ -522,6 +522,8 @@ class PowerRinse implements ToyInstance {
     const strength = Math.min(1, this.jetData[3] / 2.5);
     const bright = Math.min(1, 0.35 + strength * 0.4 + this.aimSpeed * 0.25 + (this.nozzle === 'turbo' ? 0.15 : 0));
     this.sprayLoop.set(on ? 0.55 + strength * 0.35 : 0, bright);
+    // The jet buzzes in the hand while it runs, crisp like the hiss.
+    if (on) this.ctx.hapticLevel(0.3 + strength * 0.45, 0.75);
     const d = on ? this.sampleDirtAt(this.jetData[0], this.jetData[1]) : 0;
     this.gritLoop.set(Math.min(1, d * 1.4) * 0.6, 0.4 + d * 0.4);
     this.runLevel = on ? Math.min(1, this.runLevel + dt * 2) : this.runLevel * Math.exp(-dt * 1.2);

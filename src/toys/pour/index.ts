@@ -847,6 +847,8 @@ class PourSort implements ToyInstance {
     const f = Math.min(1, flow / 2.5);
     // Brightness climbs as the target fills: the air column above the liquid shortens.
     this.trickle.set(f * 0.85, 0.25 + fill * 0.75);
+    // A soft rumble while liquid flows.
+    if (f > 0.02) this.ctx.hapticLevel(0.15 + 0.4 * f, 0.3);
     this.bubble.set(this.tubes.some((t) => t.rise) ? 0.55 : 0, 0.6);
     if (f > 0.05) {
       this.buzz += dt * 8 * f;

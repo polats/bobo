@@ -242,6 +242,8 @@ class TearSheet implements ToyInstance {
       this.strainClock = 0;
     } else if (this.grabs.size && s.maxStrain > 0.06) {
       const k = Math.min(1, (s.maxStrain - 0.06) / 0.35);
+      // Tension builds in the hand, getting stronger and crisper as the cloth nears the tear.
+      this.ctx.hapticLevel(0.12 + 0.6 * k, 0.5 + 0.4 * k);
       this.strainClock += dt;
       if (this.strainClock > 0.22 - 0.18 * k) {
         this.strainClock = 0;

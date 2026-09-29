@@ -202,6 +202,8 @@ class DigDown implements ToyInstance {
     }
     for (const id of [...this.last.keys()]) if (!seen.has(id)) this.last.delete(id);
     if (!dug) return;
+    // Scraping: a grainy buzz with the amount of dirt coming away, sharper on rock.
+    this.ctx.hapticLevel(Math.min(1, 0.2 + dug / 60), removed[ROCK] ? 0.9 : 0.35);
     const now = this.time;
     const rock = removed[ROCK];
     if (now - this.lastHaptic > (rock ? 0.06 : 0.09)) {
@@ -290,6 +292,8 @@ class DigDown implements ToyInstance {
     const s = this.sim;
     this.trickle.set(Math.min(1, s.moved / 120), 0.4 + Math.min(0.5, s.moved / 400));
     this.water.set(Math.min(1, s.flowed / 60), 0.5);
+    // Cave-ins rumble through the phone.
+    if (s.crumbled > 4) this.ctx.hapticLevel(Math.min(1, s.crumbled / 40), 0.15);
     if (s.crumbled > 10 && this.time - this.lastDigSound > 0.12) {
       this.lastDigSound = this.time;
       this.ctx.sound.play('crumble', { pitch: 0.7, gain: Math.min(1, s.crumbled / 40) });

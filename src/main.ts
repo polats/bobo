@@ -4,6 +4,7 @@ import { Panel } from './shell/panel';
 import { Pointers } from './shell/pointers';
 import { mountHub } from './shell/hub';
 import { soundIcon } from './shell/icons';
+import { hapticFrame, hapticLevel, hapticStop, hapticTier } from './shell/haptics';
 import { onSoundChange, setSoundEnabled, sound, soundEnabled, unlockSound } from './shell/sound';
 import type { Toy, ToyInstance } from './shell/types';
 // Each toy folder exports exactly one Toy from index.ts; the hub lists them in this order.
@@ -21,6 +22,8 @@ function rank(id: string) {
   return i < 0 ? ORDER.length : i;
 }
 const app = document.getElementById('app')!;
+document.addEventListener('visibilitychange', () => document.hidden && hapticStop());
+hapticTier().then((t) => console.log(`[bobo] haptics: ${t}`));
 // Audio can only start inside a user gesture; every tap re-arms it (iOS suspends it in the background).
 document.addEventListener('pointerdown', unlockSound, { capture: true, passive: true });
 
@@ -83,7 +86,7 @@ function mountToy(toy: Toy): () => void {
 
   console.log(`[bobo] creating ${toy.id}`);
   toy
-    .create({ canvas, overlay, panel, pointers, pixelRatio, setStatus: (s) => (status = s), sound, haptic, progress: meter.set, celebrate: (msg) => celebrate(stage, msg) })
+    .create({ canvas, overlay, panel, pointers, pixelRatio, setStatus: (s) => (status = s), sound, haptic, hapticLevel, progress: meter.set, celebrate: (msg) => celebrate(stage, msg) })
     .then((inst) => {
       if (!alive) return inst.destroy();
       instance = inst;
@@ -116,6 +119,7 @@ function mountToy(toy: Toy): () => void {
       const dt = Math.min(Math.max(raw, 1 / 1000), 1 / 30);
       if (window.boboAutoplay) autoplay(pointers, (now - t0) / 1000);
       instance!.frame(dt, (now - t0) / 1000);
+      hapticFrame(now);
       pointers.endFrame(dt);
       acc += raw;
       frames++;
@@ -140,6 +144,7 @@ function mountToy(toy: Toy): () => void {
     ro.disconnect();
     pointers.destroy();
     offSound();
+    hapticStop();
     instance?.destroy();
   };
 }

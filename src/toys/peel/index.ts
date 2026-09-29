@@ -559,6 +559,9 @@ class PeelIt implements ToyInstance {
     if (dt > 0) this.relRate += (n / dt - this.relRate) * Math.min(1, dt * 10);
     const pan = n ? this.pan(this.toScreen(f.releaseX, 0, 0)[0] / this.width) : 0;
     this.crackle.set(Math.min(1, this.relRate / 260) * 0.9, Math.min(1, 0.25 + this.handSpeed / 2));
+    // A crisp buzz that follows how fast the glue is letting go.
+    const rel = Math.min(1, this.relRate / 260);
+    if (rel > 0.02) this.ctx.hapticLevel(0.2 + 0.6 * rel, 0.85);
     this.relTick += n;
     this.relBuzz += n;
     if (this.relTick >= 8) {

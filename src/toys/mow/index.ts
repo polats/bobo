@@ -823,6 +823,8 @@ class MowLines implements ToyInstance {
     const level = !this.running ? 0 : stalled ? 0.12 : 0.34 + 0.5 * l + 0.1 * Math.min(1, speed);
     const bright = stalled ? 0.1 : 0.5 - 0.38 * l + 0.1 * Math.sin(this.time * 47);
     this.motor.set(level, bright);
+    // The handle hums while it runs and thickens into a deep rumble as the motor bogs down.
+    if (this.running && !stalled) this.ctx.hapticLevel(0.1 + 0.65 * l, 0.35 - 0.25 * l);
     this.spray.set(stalled ? 0 : l * 0.8, 0.4 + 0.3 * l);
     if (stalled || !this.running) return;
     this.tickAcc += l * 22 * dt;

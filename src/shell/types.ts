@@ -17,6 +17,12 @@ export interface ToyContext {
   /** Light haptic tick on impacts; no-op where unsupported. */
   haptic(strength?: 'light' | 'medium' | 'heavy'): void;
   /**
+   * Continuous vibration for this frame: intensity 0..1, sharpness 0 (rumble) .. 1 (crisp). Call every
+   * frame it should run; skip a frame and it stops. Core Haptics on iOS, the best Android tier, or
+   * pulses in the browser.
+   */
+  hapticLevel(intensity: number, sharpness?: number): void;
+  /**
    * Shared completion meter (a ring at the top of the screen). Pass 0..1 with an optional label
    * ("clean", "revealed"); pass null to hide it. Cheap to call every frame.
    */

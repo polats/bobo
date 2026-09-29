@@ -53,6 +53,19 @@ Inside a toy there's a **Tune** panel (top right) with live sliders and a **Base
 
 Every toy has procedural sound: [`src/shell/sound.ts`](src/shell/sound.ts) synthesises 14 one-shot voices (pop, squish, boing, thud, knock, tick, snap, rip, splash, whoosh, crumble, sizzle, chime, plop) and 5 filtered loops (hiss, rumble, trickle, crackle, bubble) with Web Audio, so there are no audio files. Toys drive pitch, loudness and stereo position from the physics, such as impact strength, body size, pour rate or stir speed. Haptics fire alongside on iOS and Android.
 
+## Haptics
+
+Taps and hits use `ctx.haptic()`. For feel that runs *with* the action, toys call `ctx.hapticLevel(intensity, sharpness)` every frame; skipping a frame stops it. Power Rinse's jet, Mow Lines' motor bogging down, Peel It's glue letting go, Pour Sort's stream, Spool Sort's reeling, Dig Down's scraping and cave-ins, Foundry's pour and Tear Sheet's strain all use it. [`src/shell/haptics.ts`](src/shell/haptics.ts) sends the level (up to 30 times a second) to a small native plugin that picks the best the phone can do:
+
+| Platform | How |
+|---|---|
+| iOS | One looping Core Haptics player with live intensity and sharpness (`BoboHapticsPlugin` in `ios/App/App/SceneDelegate.swift`) |
+| Android 16+ with envelope support | Short intensity/sharpness envelopes, re-sent before each ends, each ramping from the last level (`BoboHapticsPlugin.java`) |
+| Android with amplitude control | A looping waveform at the current amplitude; sharp settings become a fast pulse train. The Galaxy S24 lands here: Android 16, but its motor reports no envelope support |
+| Browser | `navigator.vibrate` pulses whose rate follows the intensity |
+
+The app logs its tier at start (`[bobo] haptics: core-haptics`).
+
 Play it: https://bobo-ashy-ten.vercel.app. Deploys are manual for now: `npx vercel deploy --prod --archive=tgz` (auto-deploy stopped when the repo moved to ai-asylum).
 
 ## Gallery
@@ -75,7 +88,6 @@ Next up, from [docs/research/2026-directions.md](docs/research/2026-directions.m
 
 | Next | What | Builds on |
 |---|---|---|
-| **Continuous haptics** (next) | A Capacitor plugin with one API for load-driven vibration: Core Haptics on iOS; on Android, envelope effects (Android 16), amplitude waveforms, or composition primitives, by device | [shear-knit.md §2](docs/research/shear-knit.md) · [Core Haptics](https://developer.apple.com/documentation/corehaptics) · [Android custom haptics](https://developer.android.com/develop/ui/views/haptics/custom-haptic-effects) |
 | **Shear** | Clip the fleece off a sheep with shell fur and cut maps; the fleece peels off in one piece | Tear Sheet cutting, Laundry Line pins · [Lengyel et al. 2001](https://hhoppe.com/proj/fur/) |
 | **Rope & yarn ball** | Ropes, chains and a yarn ball that unspools and tangles as a cat bats it | Pull the Thread's yarn · [Cosserat rods](https://animation.rwth-aachen.de/publication/0550/) |
 | **Knit-a-Scarf** | Knit stitch by stitch from your own spun yarn, then dress the sheep | Pull the Thread's knit grid · [Stitch Meshes](https://www.cemyuksel.com/research/stitchmeshes/) |

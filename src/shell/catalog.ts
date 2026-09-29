@@ -46,6 +46,8 @@ export interface Update {
   minor?: boolean;
 }
 
+const FEEL: Update = { date: '2026-09-29T17:58:04-04:00', note: 'Continuous haptics: a buzz in your hand that follows the action (Core Haptics on iPhone).', minor: true };
+
 const SOUND: Update = { date: '2026-09-29T11:46:37-04:00', note: 'Sound: procedural effects that follow the physics, with a mute toggle.', minor: true };
 
 /** What changed since each toy shipped, newest first. Add a line when a toy gets a notable update. */
@@ -64,9 +66,12 @@ const UPDATES: Record<string, Update[]> = {
   goo: [{ date: '2026-09-29T12:34:05-04:00', note: 'Snow and sand glitter: each grain catches the light as it tumbles (toggle in Tune).' }, SOUND],
 };
 
-/** A toy's updates, newest first (the shared sound pass included). */
+/** Toys that drive ctx.hapticLevel. */
+const FELT = ['rinse', 'mow', 'peel', 'pour', 'spool', 'dig', 'foundry', 'cloth'];
+
+/** A toy's updates, newest first (the shared sound and haptics passes included). */
 export function updates(id: string): Update[] {
-  const own = UPDATES[id] ?? [];
+  const own = [...(FELT.includes(id) ? [FEEL] : []), ...(UPDATES[id] ?? [])];
   return own.includes(SOUND) || ['merge', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints'].includes(id) ? own : [...own, SOUND];
 }
 

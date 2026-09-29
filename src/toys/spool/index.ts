@@ -445,6 +445,8 @@ class SpoolSort implements ToyInstance {
       }
     }
     this.yarnLoop.set(Math.min(1, pulling * 0.45), 0.6);
+    // Reeling hums in the hand, a little stronger with more spools going.
+    if (pulling) this.ctx.hapticLevel(Math.min(0.7, 0.28 + pulling * 0.12), 0.55);
     // Spools whose colour is all gone leave the rack.
     for (let slot = 0; slot < SLOTS; slot++) {
       const s = this.spools[slot];

@@ -783,6 +783,8 @@ class Foundry implements ToyInstance {
     const snd = this.ctx.sound;
     const r = this.rate / MAX_RATE;
     this.hiss.set(Math.min(1, r * 1.2), 0.5 + 0.4 * r);
+    // Heavy molten metal pouring: a low, steady rumble.
+    if (r > 0.02) this.ctx.hapticLevel(0.15 + 0.45 * Math.min(1, r), 0.2);
     this.trickle.set(Math.min(1, this.flowed / 900), 0.35 + Math.min(0.5, this.flowed / 3000));
     const hot = this.phase === 'pour' || this.phase === 'cool' ? this.stat.maxT : 0;
     this.rumble.set(this.crucLift < 5 && this.left > 1 ? 0.25 + r * 0.5 : 0, 0.3 + r * 0.4);
