@@ -1,36 +1,38 @@
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
-import { PICTURES, type Picture } from './pictures';
+import { PICTURES } from './pictures';
+import { Colourwork, T_HI } from './sim';
 
 export const spoolToy: Toy = {
   id: 'spool',
   title: 'Spool Sort',
-  blurb: 'Tap a spool and it reels its colour out of a knitted picture, unravelling it stitch by stitch.',
-  tech: 'Mass-spring knit + verlet yarn · Canvas 2D',
+  blurb:
+    'A fair-isle picture where every colour is one long yarn. Hold a spool to reel its strand in: it tightens, drags on the floats caught behind other colours, and pops the stitches out loop by loop.',
+  tech: 'XPBD knit + stranded-yarn cables with capstan-friction catches · Canvas 2D',
   swatch: 'linear-gradient(135deg,#e8364f,#fff4e6 45%,#5cc05a)',
   refs: [
     {
-      short: 'Knit Out',
-      title: 'Knit Out and the 2025 yarn-sort wave (Yarn Loop, Wool Crush)',
-      url: 'https://www.pocketgamer.biz/',
-      use: 'Design inspiration: sort colours out of a knitted picture onto spools.',
+      short: 'Macklin 2016',
+      title: 'Macklin, Müller, Chentanez — XPBD: Position-Based Simulation of Compliant Constrained Dynamics (MIG 2016)',
+      url: 'https://doi.org/10.1145/2994258.2994272',
+      use: 'One solver for the stitch grid (soft-then-stiff compliant links) and the yarn cables, whose stretch gives the tension that pops stitches.',
     },
     {
-      short: 'Yuksel 2012',
-      title: 'Yuksel et al. — Stitch Meshes for Modeling Knitted Clothing (SIGGRAPH 2012)',
-      url: 'https://www.cemyuksel.com/research/stitchmeshes/',
-      use: 'A picture as a grid of stitches whose connections decide what holds and what falls away.',
+      short: 'Cirio 2017',
+      title: 'Cirio, Lopez-Moreno, Otaduy — Yarn-Level Cloth Simulation with Sliding Persistent Contacts (IEEE TVCG 2017)',
+      url: 'https://doi.org/10.1109/TVCG.2016.2592908',
+      use: 'The idea of yarn sliding through persistent contacts: each caught float is a contact node the strand slides through, moving rest length between segments.',
     },
     {
-      short: 'Jakobsen 2001',
-      title: 'Jakobsen — Advanced Character Physics (GDC 2001)',
-      url: 'https://www.cs.cmu.edu/afs/cs/academic/class/15462-s13/www/lec_slides/Jakobsen.pdf',
-      use: 'Verlet particles with distance constraints for both the hanging knit and the yarn strands.',
+      short: 'Capstan eq.',
+      title: 'Capstan equation (belt friction, Euler–Eytelwein)',
+      url: 'https://en.wikipedia.org/wiki/Capstan_equation',
+      use: 'Yarn slips through a catch only when one side pulls e^(μθ) times harder than the other, so catches hold back tension and drag the patch they are wrapped around.',
     },
     {
-      short: 'Kaldor 2008',
-      title: 'Kaldor, Marschner, James — Simulating Knitted Cloth at the Yarn Level (SIGGRAPH 2008)',
-      url: 'https://www.cs.cornell.edu/~srm/publications/SG08-knit-lr.pdf',
-      use: 'Feel reference: pulling a yarn tugs the neighbouring stitches before they let go.',
+      short: 'Fair Isle',
+      title: 'Fair Isle (technique) — stranded colourwork',
+      url: 'https://en.wikipedia.org/wiki/Fair_Isle_(technique)',
+      use: 'The knit structure: each colour carried behind the others as floats, with floats longer than a few stitches caught by the working yarn.',
     },
   ],
   async create(ctx) {
@@ -38,633 +40,262 @@ export const spoolToy: Toy = {
   },
 };
 
-const SLOTS = 4;
-const ROPE_N = 16;
-const ITER = 14;
-/** Per-frame pull of each stitch back toward its place in the chart: the knit is loosely pinned to a board. */
-const HOLD = 0.06;
-
-interface Spool {
-  color: string;
-  capacity: number;
-  /** Stitches wound on so far, and stitches claimed but still on their way. */
-  count: number;
-  queue: number[];
-  /** Stitch the yarn is currently pulling out, or -1. */
-  head: number;
-  pull: number;
-  spin: number;
-  spinV: number;
-  /** 0..1 slide-in, then 1; after full, pop-out timer counts up. */
-  enter: number;
-  popT: number;
-  nope: number;
-  rope: Rope | null;
-  gone: boolean;
+interface Puff {
+  x: number; y: number; vx: number; vy: number; life: number; color: string;
 }
 
-interface Rope {
-  x: Float32Array;
-  y: Float32Array;
-  px: Float32Array;
-  py: Float32Array;
-  /** Fraction of the rope still out (drops to 0 as the loose end is reeled in). */
-  out: number;
-  loose: boolean;
-  hx: number;
-  hy: number;
-}
+const TAU = Math.PI * 2;
 
 class SpoolSort implements ToyInstance {
   private g: CanvasRenderingContext2D;
   private width = 1;
   private height = 1;
-  private u = 1; // one CSS pixel in device pixels
-  // Knit: one verlet node per stitch.
-  private W = 16;
-  private H = 16;
+  private u = 1;
   private pitch = 20;
   private originX = 0;
   private originY = 0;
-  private x = new Float32Array(0);
-  private y = new Float32Array(0);
-  private px = new Float32Array(0);
-  private py = new Float32Array(0);
-  private color: string[] = [];
-  /** 0 gone, 1 knitted in, 2 falling away (cut loose). */
-  private state = new Uint8Array(0);
-  private claimed = new Uint8Array(0);
-  private springs: Int32Array = new Int32Array(0);
-  private rest: Float32Array = new Float32Array(0);
-  private total = 0;
-  private cleared = 0;
   private picIndex = 0;
-  private pic!: Picture;
-  private spools: (Spool | null)[] = [];
-  private refill: number[] = [];
-  private grab: { id: number; node: number } | null = null;
+  private sim!: Colourwork;
+  private holds = new Map<number, number>();
+  private spin: number[] = [];
+  private nope: number[] = [];
+  private flash: number[] = [];
+  private puffs: Puff[] = [];
   private done = 0;
-  private dropIn = 0;
+  private fade = 0;
   private time = 0;
-  private yarnLoop;
-  private lastTick = 0;
-  private stuck = 0;
+  private trickle;
+  private hiss;
+  private popRate = 0;
+  private everHeld = false;
 
   constructor(private ctx: ToyContext) {
     const g = ctx.canvas.getContext('2d', { alpha: false });
     if (!g) throw new Error('Canvas 2D is not available.');
     this.g = g;
-    this.yarnLoop = ctx.sound.loop('trickle');
+    this.trickle = ctx.sound.loop('trickle');
+    this.hiss = ctx.sound.loop('hiss');
     ctx.panel.action('Next picture', () => this.load(this.picIndex + 1));
     ctx.panel.action('Start over', () => this.load(this.picIndex));
     this.width = ctx.canvas.width;
     this.height = ctx.canvas.height;
     this.load(0);
-    if (import.meta.env.DEV)
-      (window as unknown as Record<string, unknown>).__spool = () => ({
-        left: this.total - this.cleared,
-        spools: this.spools.map((s) => s && `${s.color}:${s.count}/${s.capacity}`),
-        open: [...this.openColors().keys()],
-        pic: this.pic.name,
-      });
+    if (import.meta.env.DEV) {
+      // Dev probe for headless tests: strand state and spool centres in CSS pixels.
+      const w = window as unknown as Record<string, unknown>;
+      w.__spool = () => {
+        const s = this.sim;
+        const css = this.ctx.canvas.clientWidth / this.width;
+        return {
+          pic: PICTURES[this.picIndex].name,
+          left: s.left,
+          progress: s.progress,
+          complete: s.complete,
+          strands: s.strands.map((st, i) => {
+            const [x, y, w, h] = this.spoolRect(i);
+            const front = st.chain[st.chain.length - 1] ?? -1;
+            return {
+              color: st.color, next: st.next, of: st.stitches.length, catches: Math.max(0, st.chain.length - 1),
+              t0: Math.round(st.tension[0] ?? 0), tf: Math.round(st.tension[st.tension.length - 1] ?? 0),
+              grip: front >= 0 ? Math.round(s.grip(front, st.give)) : 0, tmax: Math.round(st.tmax), give: +st.give.toFixed(2),
+              jam: st.jam, blocker: st.blocker, wound: +st.wound.toFixed(1), total: +st.total.toFixed(1), done: st.done,
+              holding: st.holding, sx: (x + w / 2) * css, sy: (y + h / 2) * css,
+              belowAlive: front >= 0 && front + s.W < s.n ? !!s.alive[front + s.W] : false,
+            };
+          }),
+        };
+      };
+      w.__spoolFront = (i: number) => {
+        const st = this.sim.strands[i];
+        const k = st.chain[st.chain.length - 1];
+        if (k === undefined) return null;
+        const css = this.ctx.canvas.clientWidth / this.width;
+        return { x: (this.originX + this.sim.pos[k * 2] * this.pitch) * css, y: (this.originY + this.sim.pos[k * 2 + 1] * this.pitch) * css, rest: [(k % this.sim.W), Math.floor(k / this.sim.W)] };
+      };
+    }
   }
 
   // ---------------------------------------------------------------- setup
 
   private load(index: number) {
     this.picIndex = ((index % PICTURES.length) + PICTURES.length) % PICTURES.length;
-    this.pic = PICTURES[this.picIndex];
-    const rows = this.pic.rows;
-    this.H = rows.length;
-    this.W = Math.max(...rows.map((r) => r.length));
-    const n = this.W * this.H;
-    this.x = new Float32Array(n);
-    this.y = new Float32Array(n);
-    this.px = new Float32Array(n);
-    this.py = new Float32Array(n);
-    this.state = new Uint8Array(n).fill(1);
-    this.claimed = new Uint8Array(n);
-    this.color = [];
-    for (let j = 0; j < this.H; j++)
-      for (let i = 0; i < this.W; i++) {
-        const ch = rows[j][i] ?? rows[j][0];
-        this.color.push(this.pic.palette[ch] ?? '#ccc');
-      }
-    // Structural links hold the grid; shear links keep it from folding like a curtain.
-    const sp: number[] = [];
-    const rl: number[] = [];
-    const link = (a: number, b: number, l: number) => {
-      sp.push(a, b);
-      rl.push(l);
-    };
-    for (let j = 0; j < this.H; j++)
-      for (let i = 0; i < this.W; i++) {
-        const k = j * this.W + i;
-        if (i + 1 < this.W) link(k, k + 1, 1);
-        if (j + 1 < this.H) link(k, k + this.W, 1);
-        if (i + 1 < this.W && j + 1 < this.H) link(k, k + this.W + 1, Math.SQRT2);
-        if (i > 0 && j + 1 < this.H) link(k, k + this.W - 1, Math.SQRT2);
-      }
-    this.springs = Int32Array.from(sp);
-    this.rest = Float32Array.from(rl);
-    this.total = n;
-    this.cleared = 0;
+    this.sim = new Colourwork(PICTURES[this.picIndex]);
+    const n = this.sim.strands.length;
+    this.spin = new Array(n).fill(0);
+    this.nope = new Array(n).fill(0);
+    this.flash = new Array(n).fill(0);
+    this.holds.clear();
+    this.puffs = [];
     this.done = 0;
-    this.grab = null;
-    for (const s of this.spools) s?.rope && (s.rope = null);
-    this.spools = [];
-    this.refill = [];
+    this.fade = 0;
     this.layout();
-    // The new picture drops in from above on its needle.
-    this.dropIn = 1;
-    for (let k = 0; k < n; k++) {
-      const [hx, hy] = this.home(k);
-      this.x[k] = this.px[k] = hx;
-      this.y[k] = this.py[k] = hy;
-    }
-    for (let s = 0; s < SLOTS; s++) this.spools.push(this.newSpool(s * 0.12));
-    this.ctx.progress(0, 'unravelled');
+    this.setMouths();
+    this.sim.initTails();
+    this.ctx.progress(0, 'reeled');
   }
 
   private layout() {
-    const { width, height } = this;
+    const { width } = this;
     this.u = this.ctx.pixelRatio;
-    // Clear of the HUD and progress pill at the top, and of the spool shelf at the bottom.
+    const W = this.sim.W, H = this.sim.H;
     const top = 138 * this.u;
     const [, shelfY] = this.spoolRect(0);
-    const room = shelfY - top - 30 * this.u;
-    this.pitch = Math.min((width * 0.84) / this.W, room / (this.H + 0.5));
-    this.originX = (width - this.pitch * (this.W - 1)) / 2;
-    // Hang it a little above the middle of the free space: the knit sags a bit under gravity.
-    this.originY = top + Math.max(0, (room - this.pitch * this.H) * 0.18) + this.pitch * 0.5;
+    // Leave room under the knit for the strands to run down to the rack.
+    const room = shelfY - top - 70 * this.u;
+    this.pitch = Math.min((width * 0.84) / W, room / (H + 0.6));
+    this.originX = (width - this.pitch * (W - 1)) / 2;
+    this.originY = top + this.pitch * 0.8;
   }
 
-  private home(k: number): [number, number] {
-    const i = k % this.W, j = Math.floor(k / this.W);
-    return [this.originX + i * this.pitch, this.originY + j * this.pitch];
-  }
-
-  /** Needle bar height; bounces a little as the picture lands. */
-  private needleY() {
-    return this.originY - this.pitch * 0.55 - this.dropIn * this.dropIn * this.height * 0.6;
-  }
-
-  // ---------------------------------------------------------------- spools
-
-  private newSpool(delay = 0): Spool | null {
-    const color = this.pickColor();
-    if (!color) return null;
-    return {
-      color,
-      capacity: 18 + Math.floor(Math.random() * 3) * 3,
-      count: 0,
-      queue: [],
-      head: -1,
-      pull: 0,
-      spin: 0,
-      spinV: 0,
-      enter: -delay * 4,
-      popT: -1,
-      nope: 0,
-      rope: null,
-      gone: false,
-    };
-  }
-
-  /**
-   * The colour most in need of a spool. Colours you can reach right now come first, so the rack
-   * never fills up with colours buried higher in the picture; then whatever has the most stitches
-   * left beyond the room already on the rack.
-   */
-  private pickColor(): string | null {
-    const left = new Map<string, number>();
-    const open = this.openColors();
-    for (let k = 0; k < this.total; k++) if (this.state[k] === 1 && !this.claimed[k]) left.set(this.color[k], (left.get(this.color[k]) ?? 0) + 1);
-    const room = new Map<string, number>();
-    for (const s of this.spools) if (s && s.popT < 0) room.set(s.color, (room.get(s.color) ?? 0) + s.capacity - s.count);
-    let best: string | null = null;
-    let bestScore = 0;
-    for (const [c, n] of left) {
-      const need = n - (room.get(c) ?? 0);
-      if (need <= 0) continue;
-      const reachable = (open.get(c) ?? 0) > 0 && !room.has(c);
-      const score = need + (reachable ? 10_000 : 0);
-      if (score > bestScore) [best, bestScore] = [c, score];
+  private setMouths() {
+    const s = this.sim;
+    for (let i = 0; i < s.strands.length; i++) {
+      const [mx, my] = this.spoolMouth(i);
+      s.mouths[i * 2] = (mx - this.originX) / this.pitch;
+      s.mouths[i * 2 + 1] = (my - this.originY) / this.pitch;
     }
-    return best;
-  }
-
-  /** Exposed, unclaimed stitches per colour: what a tap could reel in right now. */
-  private openColors() {
-    const open = new Map<string, number>();
-    for (let k = 0; k < this.total; k++)
-      if (this.state[k] === 1 && !this.claimed[k] && this.exposed(k)) open.set(this.color[k], (open.get(this.color[k]) ?? 0) + 1);
-    return open;
   }
 
   private spoolRect(slot: number): [number, number, number, number] {
-    const w = Math.min(this.width / (SLOTS + 1.4), 92 * this.u);
-    const h = w * 1.25;
-    const gap = (this.width - w * SLOTS) / (SLOTS + 1);
+    const n = this.sim ? this.sim.strands.length : 5;
+    const w = Math.min(this.width / (n + 1.2), 74 * this.u);
+    const h = w * 1.3;
+    const gap = (this.width - w * n) / (n + 1);
     const x = gap + slot * (w + gap);
-    const y = this.height - h - Math.max(26 * this.u, this.height * 0.05);
+    const y = this.height - h - Math.max(34 * this.u, this.height * 0.055);
     return [x, y, w, h];
   }
 
-  /** Where the yarn meets the spool core. */
   private spoolMouth(slot: number): [number, number] {
-    const [x, y, w, h] = this.spoolRect(slot);
-    return [x + w / 2, y + h * 0.3];
+    const [x, y, w] = this.spoolRect(slot);
+    return [x + w / 2, y + w * 0.12];
   }
 
-  /** Like real knitting, a stitch can only come out once the one below it has: the picture unravels from the bottom up. */
-  private exposed(k: number) {
-    const j = Math.floor(k / this.W);
-    return j === this.H - 1 || this.state[k + this.W] !== 1;
+  private sx(x: number) {
+    return this.originX + x * this.pitch;
   }
 
-  /** Tap: reel in every exposed stitch of this spool's colour, following it inward through the knit. */
-  private reel(slot: number) {
-    const s = this.spools[slot];
-    if (!s || s.popT >= 0 || s.enter < 1) return;
-    const room = s.capacity - s.count - s.queue.length;
-    if (room <= 0) return;
-    const seen = new Uint8Array(this.total);
-    const frontier: number[] = [];
-    for (let k = 0; k < this.total; k++)
-      if (this.state[k] === 1 && !this.claimed[k] && this.color[k] === s.color && this.exposed(k)) {
-        frontier.push(k);
-        seen[k] = 1;
-      }
-    if (!frontier.length) {
-      s.nope = 1;
-      this.ctx.haptic('light');
-      this.ctx.sound.play('knock', { pitch: 0.7, gain: 0.5, pan: this.pan(slot) });
-      return;
-    }
-    // Start nearest the spool, then walk the colour patch breadth-first so the yarn runs continuously.
-    const [mx] = this.spoolMouth(slot);
-    frontier.sort((a, b) => Math.abs(this.x[a] - mx) - Math.abs(this.x[b] - mx) + (this.y[b] - this.y[a]) * 0.5);
-    const order: number[] = [];
-    for (let q = 0; q < frontier.length && order.length < room; q++) {
-      const k = frontier[q];
-      order.push(k);
-      const i = k % this.W, j = Math.floor(k / this.W);
-      for (const [di, dj] of [[0, -1], [-1, 0], [1, 0], [0, 1]]) {
-        const ii = i + di, jj = j + dj;
-        if (ii < 0 || ii >= this.W || jj < 0 || jj >= this.H) continue;
-        const kk = jj * this.W + ii;
-        if (seen[kk] || this.state[kk] !== 1 || this.claimed[kk] || this.color[kk] !== s.color) continue;
-        // Only follow into stitches that will be free by the time the yarn reaches them.
-        const below = kk + this.W;
-        if (jj < this.H - 1 && this.state[below] === 1 && !seen[below]) continue;
-        seen[kk] = 1;
-        frontier.push(kk);
-      }
-    }
-    for (const k of order) this.claimed[k] = 1;
-    s.queue.push(...order);
-    this.ctx.haptic('light');
-    this.ctx.sound.play('whoosh', { pitch: 1.6, gain: 0.3, pan: this.pan(slot) });
-  }
-
-  private pan(slot: number) {
-    return ((slot + 0.5) / SLOTS - 0.5) * 1.2;
+  private sy(y: number) {
+    return this.originY + y * this.pitch;
   }
 
   // ---------------------------------------------------------------- frame
 
   frame(dt: number, t: number) {
     this.time = t;
+    const s = this.sim;
     this.input();
-    this.dropIn = Math.max(0, this.dropIn - dt * 2.2);
-    this.stepSpools(dt);
-    this.stepKnit(dt);
-    this.stepRopes(dt);
+    this.setMouths();
+    s.step(dt);
+    this.juice(dt);
     this.draw();
-    const frac = this.cleared / this.total;
-    this.ctx.progress(frac, 'unravelled');
-    if (frac >= 1 && !this.done) {
+    const frac = s.progress;
+    this.ctx.progress(frac, 'reeled');
+    if (s.complete && !this.done) {
       this.done = t;
-      this.ctx.celebrate(`${this.pic.name} unravelled!`);
+      this.ctx.celebrate(`${PICTURES[this.picIndex].name} unravelled!`);
     }
-    if (this.done && t - this.done > 2.2) this.load(this.picIndex + 1);
-    this.ctx.setStatus(`${this.total - this.cleared} stitches left`);
+    if (this.done && t - this.done > 2.6) this.load(this.picIndex + 1);
+    this.ctx.setStatus(`${s.left} stitches left`);
   }
 
   private input() {
+    const s = this.sim;
     const { width, height } = this;
     for (const p of this.ctx.pointers.active.values()) {
+      if (!p.justDown) continue;
       const x = p.x * width, y = (1 - p.y) * height;
-      if (p.justDown) {
-        const slot = this.spools.findIndex((_, s) => {
-          const [rx, ry, rw, rh] = this.spoolRect(s);
-          return x > rx - 8 * this.u && x < rx + rw + 8 * this.u && y > ry - 14 * this.u && y < ry + rh + 8 * this.u;
-        });
-        if (slot >= 0) {
-          this.reel(slot);
-          continue;
+      for (let i = 0; i < s.strands.length; i++) {
+        const [rx, ry, rw, rh] = this.spoolRect(i);
+        const pad = 8 * this.u;
+        if (x < rx - pad || x > rx + rw + pad || y < ry - 3 * pad || y > ry + rh + 3 * pad) continue;
+        if (s.strands[i].done) {
+          this.nope[i] = 1;
+          this.ctx.sound.play('knock', { pitch: 0.7, gain: 0.4, pan: this.pan(i) });
+        } else {
+          this.holds.set(p.id, i);
+          this.everHeld = true;
+          this.ctx.haptic('light');
+          this.ctx.sound.play('tick', { pitch: 1.4, gain: 0.3, pan: this.pan(i) });
         }
-        // Otherwise grab the knit and give it a shake.
-        let best = -1;
-        let bd = (this.pitch * 1.6) ** 2;
-        for (let k = 0; k < this.total; k++) {
-          if (this.state[k] !== 1) continue;
-          const d = (this.x[k] - x) ** 2 + (this.y[k] - y) ** 2;
-          if (d < bd) [best, bd] = [k, d];
-        }
-        if (best >= 0) {
-          this.grab = { id: p.id, node: best };
-          this.ctx.sound.play('squish', { pitch: 1.8, gain: 0.25 });
-        }
-      }
-      if (this.grab && this.grab.id === p.id && this.state[this.grab.node] === 1) {
-        const k = this.grab.node;
-        this.x[k] += (x - this.x[k]) * 0.35;
-        this.y[k] += (y - this.y[k]) * 0.35;
+        break;
       }
     }
-    if (this.grab && !this.ctx.pointers.active.has(this.grab.id)) this.grab = null;
+    for (const id of [...this.holds.keys()]) if (!this.ctx.pointers.active.has(id)) this.holds.delete(id);
+    const held = new Set(this.holds.values());
+    s.strands.forEach((st, i) => (st.holding = held.has(i) && !st.done));
   }
 
-  private stepSpools(dt: number) {
-    let pulling = 0;
-    for (let slot = 0; slot < SLOTS; slot++) {
-      const s = this.spools[slot];
-      if (!s) {
-        // Empty slot: wait for a colour that still needs a home.
-        if (Math.random() < dt * 2) this.spools[slot] = this.newSpool();
+  private pan(slot: number) {
+    return ((slot + 0.5) / this.sim.strands.length - 0.5) * 1.2;
+  }
+
+  private juice(dt: number) {
+    const s = this.sim;
+    let pops = 0;
+    for (const e of s.events) {
+      const st = s.strands[e.strand];
+      if (e.slip) {
+        // A caught float worked its way out from behind its leg.
+        this.ctx.sound.play('snap', { gain: 0.45, pitch: 1.4, pan: this.pan(e.strand) });
+        this.ctx.haptic('medium');
+        this.burst(e.x, e.y, st.color, 5);
         continue;
       }
-      s.enter = Math.min(1, s.enter + dt * 4);
-      s.nope = Math.max(0, s.nope - dt * 3);
-      s.spin += s.spinV * dt;
-      s.spinV *= Math.exp(-dt * 4);
-      if (s.popT >= 0) {
-        s.popT += dt;
-        if (s.popT > 0.45) {
-          this.spools[slot] = null;
-          const next = this.newSpool();
-          if (next) next.enter = -0.3;
-          this.spools[slot] = next;
-        }
-        continue;
+      pops++;
+      this.spin[e.strand] += 1;
+      this.burst(e.x, e.y, st.color, 4);
+      if (e.freed >= 0) {
+        // Another colour's caught float springs loose as this stitch leaves.
+        this.ctx.sound.play('snap', { gain: 0.5, pitch: 1.1, pan: this.pan(e.freed) });
+        this.ctx.haptic('medium');
+        this.flash[e.freed] = 1;
       }
-      // Pull the next stitch out: the yarn tugs it toward the spool, then it lets go.
-      if (s.head < 0 && s.queue.length) {
-        s.head = s.queue.shift()!;
-        s.pull = 0;
-        if (!s.rope) s.rope = this.makeRope(slot, s.head);
-        s.rope.loose = false;
-      }
-      if (s.head >= 0) {
-        const k = s.head;
-        pulling++;
-        // Speeds up the longer the run: slow first tug, then a satisfying zip.
-        const rate = 9 + Math.min(26, s.count * 1.6);
-        s.pull += dt * rate;
-        const [mx, my] = this.spoolMouth(slot);
-        const dx = mx - this.x[k], dy = my - this.y[k];
-        const d = Math.hypot(dx, dy) || 1;
-        const tug = this.pitch * 0.9 * dt * rate;
-        this.x[k] += (dx / d) * tug;
-        this.y[k] += (dy / d) * tug;
-        if (s.pull >= 1) {
-          this.unknit(k, dx / d, dy / d);
-          s.count++;
-          s.spinV += 14;
-          s.head = -1;
-          const now = this.time;
-          if (now - this.lastTick > 0.03) {
-            this.lastTick = now;
-            this.ctx.sound.play('tick', { pitch: 0.8 + Math.min(1.2, s.count * 0.05), gain: 0.5, pan: this.pan(slot) });
-          }
-          if (s.count >= s.capacity) this.finishSpool(slot);
-          else if (!s.queue.length && s.rope) s.rope.loose = true;
-        }
+      if (s.strands[e.strand].done || s.strands[e.strand].tail > 0) this.ctx.sound.play('chime', { gain: 0.35, pitch: 1 + e.strand * 0.1 });
+    }
+    if (pops) {
+      const k = Math.min(1, this.popRate / 12);
+      const e = s.events[s.events.length - 1];
+      this.ctx.sound.play('tick', { gain: Math.min(0.7, 0.35 + pops * 0.1), pitch: 0.85 + k * 0.8, pan: this.pan(e.strand) });
+      this.ctx.haptic(pops > 1 ? 'medium' : 'light');
+    }
+    if (dt > 0) this.popRate += (pops / dt - this.popRate) * Math.min(1, dt * 4);
+    // Sound and a continuous buzz from the strands being reeled: speed rasps, tension hums.
+    let speed = 0, tension = 0, sharp = 0;
+    for (const st of s.strands) {
+      if (st.tail > 0) speed = Math.max(speed, 1);
+      if (!st.holding) continue;
+      speed = Math.max(speed, st.reelSpeed / 24);
+      const t = Math.min(1, (st.tension[0] ?? 0) / T_HI);
+      if (t > tension) {
+        tension = t;
+        sharp = 0.25 + 0.6 * Math.min(1, st.reelSpeed / 24);
       }
     }
-    this.yarnLoop.set(Math.min(1, pulling * 0.45), 0.6);
-    // Reeling hums in the hand, a little stronger with more spools going.
-    if (pulling) this.ctx.hapticLevel(Math.min(0.7, 0.28 + pulling * 0.12), 0.55);
-    // Spools whose colour is all gone leave the rack.
-    for (let slot = 0; slot < SLOTS; slot++) {
-      const s = this.spools[slot];
-      if (!s || s.popT >= 0 || s.queue.length || s.head >= 0 || s.enter < 1) continue;
-      if (!this.color.some((c, k) => c === s.color && this.state[k] === 1 && !this.claimed[k])) {
-        if (s.count > 0) this.finishSpool(slot);
-        else s.popT = 0.2;
-      }
+    this.trickle.set(Math.min(0.8, speed * 0.8), 0.3 + speed * 0.5);
+    this.hiss.set(tension * tension * 0.35, 0.2 + tension * 0.6);
+    if (tension > 0.02 || speed > 0.05) this.ctx.hapticLevel(0.12 + tension * 0.7 + speed * 0.15, sharp || 0.5);
+    for (let i = 0; i < this.spin.length; i++) {
+      this.spin[i] += s.strands[i].reelSpeed * dt * 0.25 + (s.strands[i].tail > 0 ? dt * 6 : 0);
+      this.nope[i] = Math.max(0, this.nope[i] - dt * 3);
+      this.flash[i] = Math.max(0, this.flash[i] - dt * 2);
     }
-    this.unstick(dt);
+    for (const p of this.puffs) {
+      p.vy += 3 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt * 1.6;
+    }
+    this.puffs = this.puffs.filter((p) => p.life > 0);
+    this.fade = Math.min(1, this.fade + dt * 3);
   }
 
-  /**
-   * Never let the rack jam: if no spool matches any colour you can reach and nothing is reeling,
-   * the emptiest spool of an unreachable colour slides away to make room for one you can use.
-   */
-  private unstick(dt: number) {
-    const racked = this.spools.filter((s): s is Spool => !!s && s.popT < 0);
-    const settled = racked.length === SLOTS && racked.every((s) => s.enter >= 1 && s.head < 0 && !s.queue.length && !s.rope);
-    const open = settled ? this.openColors() : null;
-    if (!open || !open.size || racked.some((s) => open.has(s.color))) {
-      this.stuck = 0;
-      return;
-    }
-    this.stuck += dt;
-    if (this.stuck < 0.6) return;
-    this.stuck = 0;
-    let slot = -1;
-    this.spools.forEach((s, i) => {
-      if (s && s.popT < 0 && (slot < 0 || s.count < this.spools[slot]!.count)) slot = i;
-    });
-    const s = this.spools[slot]!;
-    if (s.count > 0) this.finishSpool(slot);
-    else {
-      s.popT = 0.2;
-      this.ctx.sound.play('whoosh', { pitch: 1.2, gain: 0.3, pan: this.pan(slot) });
-    }
-  }
-
-  private finishSpool(slot: number) {
-    const s = this.spools[slot]!;
-    s.popT = 0;
-    if (s.rope) s.rope.loose = true;
-    for (const k of s.queue) this.claimed[k] = 0;
-    s.queue = [];
-    this.ctx.haptic('medium');
-    this.ctx.sound.play('pop', { pitch: 1.2, pan: this.pan(slot) });
-    this.ctx.sound.play('chime', { pitch: 1 + slot * 0.12, gain: 0.35 });
-  }
-
-  /** A stitch lets go: its neighbours get yanked along the yarn, and anything cut loose falls. */
-  private unknit(k: number, nx: number, ny: number) {
-    this.state[k] = 0;
-    this.claimed[k] = 0;
-    this.cleared++;
-    const i = k % this.W, j = Math.floor(k / this.W);
-    for (let dj = -1; dj <= 1; dj++)
-      for (let di = -1; di <= 1; di++) {
-        const ii = i + di, jj = j + dj;
-        if (ii < 0 || ii >= this.W || jj < 0 || jj >= this.H) continue;
-        const kk = jj * this.W + ii;
-        if (this.state[kk] !== 1) continue;
-        this.px[kk] -= nx * this.pitch * 0.12;
-        this.py[kk] -= ny * this.pitch * 0.12;
-      }
-    this.dropLoose();
-  }
-
-  /** Flood from the needle; stitches that no longer connect to it fall off in chunks. */
-  private dropLoose() {
-    const reach = new Uint8Array(this.total);
-    const stack: number[] = [];
-    for (let i = 0; i < this.W; i++) if (this.state[i] === 1) {
-      reach[i] = 1;
-      stack.push(i);
-    }
-    while (stack.length) {
-      const k = stack.pop()!;
-      const i = k % this.W, j = Math.floor(k / this.W);
-      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const ii = i + di, jj = j + dj;
-        if (ii < 0 || ii >= this.W || jj < 0 || jj >= this.H) continue;
-        const kk = jj * this.W + ii;
-        if (reach[kk] || this.state[kk] !== 1) continue;
-        reach[kk] = 1;
-        stack.push(kk);
-      }
-    }
-    let fell = 0;
-    for (let k = 0; k < this.total; k++)
-      if (this.state[k] === 1 && !reach[k] && !this.claimed[k]) {
-        this.state[k] = 2;
-        fell++;
-      }
-    if (fell) {
-      this.ctx.haptic(fell > 12 ? 'heavy' : 'medium');
-      this.ctx.sound.play('whoosh', { pitch: 0.8, gain: Math.min(1, 0.3 + fell / 30) });
-    }
-  }
-
-  private stepKnit(dt: number) {
-    const { x, y, px, py, state } = this;
-    if (this.dropIn > 0) {
-      // Carried down whole on its needle, so the knit can't tangle before it lands.
-      const off = this.needleY() - (this.originY - this.pitch * 0.55);
-      for (let k = 0; k < this.total; k++) {
-        const [hx, hy] = this.home(k);
-        x[k] = px[k] = hx;
-        y[k] = hy + off;
-        py[k] = y[k] - off * 0.04;
-      }
-      return;
-    }
-    const g = this.pitch * 30;
-    const damp = Math.exp(-dt * 2.2);
-    const needle = this.needleY();
-    for (let k = 0; k < this.total; k++) {
-      if (!state[k]) continue;
-      const vx = (x[k] - px[k]) * damp, vy = (y[k] - py[k]) * damp;
-      px[k] = x[k];
-      py[k] = y[k];
-      x[k] += vx;
-      y[k] += vy + g * dt * dt;
-    }
-    const { springs, rest } = this;
-    const L = this.pitch;
-    for (let k = 0; k < this.total; k++) {
-      if (state[k] !== 1) continue;
-      const [hx, hy] = this.home(k);
-      x[k] += (hx - x[k]) * HOLD;
-      y[k] += (hy - y[k]) * HOLD;
-    }
-    for (let it = 0; it < ITER; it++) {
-      for (let s = 0; s < rest.length; s++) {
-        const a = springs[s * 2], b = springs[s * 2 + 1];
-        // Links only hold between two stitches that are both still knitted in (or both falling).
-        if (!state[a] || state[a] !== state[b]) continue;
-        const dx = x[b] - x[a], dy = y[b] - y[a];
-        const d = Math.hypot(dx, dy) || 1e-6;
-        const diff = ((d - rest[s] * L) / d) * 0.5;
-        x[a] += dx * diff;
-        y[a] += dy * diff;
-        x[b] -= dx * diff;
-        y[b] -= dy * diff;
-      }
-      // Top row rides the needle.
-      for (let i = 0; i < this.W; i++) {
-        if (state[i] !== 1) continue;
-        x[i] = this.originX + i * L;
-        y[i] = needle + L * 0.55;
-      }
-    }
-    // Loose chunks fall off the bottom of the screen and count as unravelled.
-    for (let k = 0; k < this.total; k++)
-      if (state[k] === 2 && y[k] > this.height + L * 2) {
-        state[k] = 0;
-        this.cleared++;
-      }
-  }
-
-  // ---------------------------------------------------------------- yarn
-
-  private makeRope(slot: number, k: number): Rope {
-    const [mx, my] = this.spoolMouth(slot);
-    const r: Rope = { x: new Float32Array(ROPE_N), y: new Float32Array(ROPE_N), px: new Float32Array(ROPE_N), py: new Float32Array(ROPE_N), out: 1, loose: false, hx: this.x[k], hy: this.y[k] };
-    for (let n = 0; n < ROPE_N; n++) {
-      const t = n / (ROPE_N - 1);
-      r.x[n] = r.px[n] = this.x[k] + (mx - this.x[k]) * t;
-      r.y[n] = r.py[n] = this.y[k] + (my - this.y[k]) * t;
-    }
-    return r;
-  }
-
-  private stepRopes(dt: number) {
-    const g = this.pitch * 40;
-    for (let slot = 0; slot < SLOTS; slot++) {
-      const s = this.spools[slot];
-      const r = s?.rope;
-      if (!s || !r) continue;
-      const [mx, my] = this.spoolMouth(slot);
-      // The end follows the stitch being pulled; once loose it whips in toward the spool.
-      if (!r.loose && s.head >= 0) {
-        r.hx = this.x[s.head];
-        r.hy = this.y[s.head];
-      }
-      if (r.loose) {
-        r.out -= dt * 3.2;
-        if (r.out <= 0) {
-          s.rope = null;
-          continue;
-        }
-      }
-      const span = Math.hypot(r.hx - mx, r.hy - my);
-      const seg = (span * (r.loose ? r.out : 1.06)) / (ROPE_N - 1);
-      for (let n = 0; n < ROPE_N; n++) {
-        const vx = (r.x[n] - r.px[n]) * 0.96, vy = (r.y[n] - r.py[n]) * 0.96;
-        r.px[n] = r.x[n];
-        r.py[n] = r.y[n];
-        r.x[n] += vx;
-        r.y[n] += vy + g * dt * dt;
-      }
-      for (let it = 0; it < 8; it++) {
-        if (!r.loose) {
-          r.x[0] = r.hx;
-          r.y[0] = r.hy;
-        }
-        r.x[ROPE_N - 1] = mx;
-        r.y[ROPE_N - 1] = my;
-        for (let n = 0; n + 1 < ROPE_N; n++) {
-          const dx = r.x[n + 1] - r.x[n], dy = r.y[n + 1] - r.y[n];
-          const d = Math.hypot(dx, dy) || 1e-6;
-          const diff = (d - seg) / d / 2;
-          r.x[n] += dx * diff;
-          r.y[n] += dy * diff;
-          r.x[n + 1] -= dx * diff;
-          r.y[n + 1] -= dy * diff;
-        }
-      }
+  private burst(x: number, y: number, color: string, n: number) {
+    for (let i = 0; i < n; i++) {
+      if (this.puffs.length > 120) this.puffs.shift();
+      const a = Math.random() * TAU;
+      const v = 0.8 + Math.random() * 1.4;
+      this.puffs.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 0.6, life: 1, color });
     }
   }
 
@@ -677,23 +308,29 @@ class SpoolSort implements ToyInstance {
     bg.addColorStop(1, '#f1cdb8');
     g.fillStyle = bg;
     g.fillRect(0, 0, width, height);
-    // Shelf the spools sit on.
     const [, sy, , sh] = this.spoolRect(0);
     g.fillStyle = '#d9a37f';
     g.fillRect(0, sy + sh - 4 * u, width, height);
     g.fillStyle = 'rgba(120,60,30,0.18)';
     g.fillRect(0, sy + sh - 4 * u, width, 5 * u);
 
-    this.drawNeedle();
+    g.save();
+    g.globalAlpha = this.fade;
+    this.drawBar();
+    this.drawFloats();
     this.drawStitches();
-    for (let slot = 0; slot < SLOTS; slot++) this.drawSpool(slot);
-    for (let slot = 0; slot < SLOTS; slot++) this.drawRope(slot);
+    this.drawCatches();
+    g.restore();
+    for (let i = 0; i < this.sim.strands.length; i++) this.drawSpool(i);
+    for (let i = 0; i < this.sim.strands.length; i++) this.drawStrand(i);
+    this.drawPuffs();
+    this.drawHint();
   }
 
-  private drawNeedle() {
+  private drawBar() {
     const { g, u } = this;
-    const y = this.needleY();
-    const x0 = this.originX - this.pitch * 1.2, x1 = this.originX + this.pitch * (this.W - 1) + this.pitch * 1.6;
+    const y = this.sy(-0.62);
+    const x0 = this.sx(-1.2), x1 = this.sx(this.sim.W + 0.2);
     g.lineCap = 'round';
     g.strokeStyle = 'rgba(90,50,30,0.25)';
     g.lineWidth = 9 * u;
@@ -713,42 +350,62 @@ class SpoolSort implements ToyInstance {
     g.moveTo(x0, y - 2 * u);
     g.lineTo(x1, y - 2 * u);
     g.stroke();
-    g.fillStyle = '#8f5a3a';
-    g.beginPath();
-    g.arc(x1, y, 7 * u, 0, Math.PI * 2);
-    g.fill();
   }
 
-  /** Every stitch is a knit "V": two slanted loops. Batched into one path per colour and pass. */
+  /** Floats behind the fabric: drawn first, so they show only through the gaps between loops. */
+  private drawFloats() {
+    const { g, sim: s, pitch: p } = this;
+    const { pos, W } = s;
+    g.lineCap = 'round';
+    g.lineWidth = p * 0.2;
+    for (const st of s.strands) {
+      if (st.done) continue;
+      g.strokeStyle = st.color;
+      g.beginPath();
+      for (let i = Math.max(1, st.next + 1); i < st.stitches.length; i++) {
+        const a = st.stitches[i - 1], b = st.stitches[i];
+        if (Math.floor(a / W) !== Math.floor(b / W) || Math.abs((a % W) - (b % W)) < 2) continue;
+        g.moveTo(this.sx(pos[a * 2]), this.sy(pos[a * 2 + 1] + 0.18));
+        g.lineTo(this.sx(pos[b * 2]), this.sy(pos[b * 2 + 1] + 0.18));
+      }
+      g.stroke();
+    }
+  }
+
+  /** Every stitch is a knit "V": two slanted loops, stretched along the pull. Batched per colour. */
   private drawStitches() {
-    const { g, x, y, state, pitch: p } = this;
+    const { g, sim: s, pitch: p } = this;
+    const { pos, alive, strain, W, H } = s;
     const byColor = new Map<string, number[]>();
-    for (let k = 0; k < this.total; k++) {
-      if (!state[k]) continue;
-      const c = this.color[k];
-      let list = byColor.get(c);
-      if (!list) byColor.set(c, (list = []));
+    const tense: number[] = [];
+    for (let k = 0; k < s.n; k++) {
+      if (!alive[k]) continue;
+      let list = byColor.get(s.color[k]);
+      if (!list) byColor.set(s.color[k], (list = []));
       list.push(k);
+      if (strain[k] > 0.05) tense.push(k);
     }
     const lobes = (ks: number[], scale: number, ox: number, oy: number) => {
       g.beginPath();
       for (const k of ks) {
-        // Orientation from the neighbour to the right (or left), so stitches follow the sag.
-        const i = k % this.W;
-        let ax = p, ay = 0;
-        const r = i + 1 < this.W && state[k + 1] ? k + 1 : i > 0 && state[k - 1] ? k - 1 : -1;
-        if (r >= 0) {
-          ax = (x[r] - x[k]) * (r > k ? 1 : -1);
-          ay = (y[r] - y[k]) * (r > k ? 1 : -1);
-        }
+        const c = k % W, r = Math.floor(k / W);
+        const x = this.sx(pos[k * 2]), y = this.sy(pos[k * 2 + 1]);
+        // Local frame from live neighbours: across the course and down the wale.
+        const L = c > 0 && alive[k - 1] ? k - 1 : k, R = c + 1 < W && alive[k + 1] ? k + 1 : k;
+        const Up = r > 0 && alive[k - W] ? k - W : k, D = r + 1 < H && alive[k + W] ? k + W : k;
+        let ax = pos[R * 2] - pos[L * 2], ay = pos[R * 2 + 1] - pos[L * 2 + 1];
+        if (L === R) (ax = 1), (ay = 0);
+        const span = Up === D ? 1 : Math.hypot(pos[D * 2] - pos[Up * 2], pos[D * 2 + 1] - pos[Up * 2 + 1]) / (D - Up === 2 * W ? 2 : 1);
         const rot = Math.atan2(ay, ax);
-        const c = Math.cos(rot), s = Math.sin(rot);
+        const cs = Math.cos(rot), sn = Math.sin(rot);
+        const tall = Math.min(1.6, Math.max(0.8, span)) * scale;
+        const thin = 1 / Math.sqrt(Math.max(0.8, span));
         for (const side of [-1, 1]) {
-          const cx = x[k] + c * side * p * 0.22 + ox, cy = y[k] + s * side * p * 0.22 + oy;
-          const a = rot + Math.PI / 2 - side * 0.5;
-          const rx = p * 0.52 * scale, ry = p * 0.27 * scale;
+          const cx = x + cs * side * p * 0.22 * thin + ox, cy = y + sn * side * p * 0.22 * thin + oy;
+          const a = rot + Math.PI / 2 - side * 0.5 * thin;
+          const rx = p * 0.52 * tall, ry = p * 0.27 * scale * thin;
           g.moveTo(cx + Math.cos(a) * rx, cy + Math.sin(a) * rx);
-          g.ellipse(cx, cy, rx, ry, a, 0, Math.PI * 2);
+          g.ellipse(cx, cy, rx, ry, a, 0, TAU);
         }
       }
     };
@@ -765,52 +422,155 @@ class SpoolSort implements ToyInstance {
     g.fillStyle = 'rgba(255,255,255,0.28)';
     lobes(all, 0.55, -p * 0.05, -p * 0.1);
     g.fill();
+    // Stretched loops thin out and pale: the yarn in them is pulled straight.
+    if (tense.length) {
+      const hi = tense.filter((k) => strain[k] > 0.14);
+      g.fillStyle = 'rgba(255,248,240,0.22)';
+      lobes(tense, 0.8, 0, 0);
+      g.fill();
+      if (hi.length) {
+        g.fillStyle = 'rgba(255,248,240,0.3)';
+        lobes(hi, 0.7, 0, 0);
+        g.fill();
+      }
+    }
+  }
+
+  /** Where a float is caught behind another colour's stitch, a fleck of it peeks through (as in real fair isle). */
+  private drawCatches() {
+    const { g, sim: s, pitch: p, u } = this;
+    const { pos, alive } = s;
+    for (const st of s.strands) {
+      if (st.done) continue;
+      g.fillStyle = st.color;
+      g.beginPath();
+      for (let i = st.next + 1; i < st.stitches.length; i++)
+        for (const k of st.catches[i]) {
+          if (!alive[k]) continue;
+          const x = this.sx(pos[k * 2]), y = this.sy(pos[k * 2 + 1] + 0.42);
+          g.moveTo(x + p * 0.16, y);
+          g.ellipse(x, y, p * 0.16, p * 0.08, 0, 0, TAU);
+        }
+      g.fill();
+    }
+    g.lineWidth = 1.2 * u;
+    g.strokeStyle = 'rgba(60,30,30,0.35)';
+    g.stroke();
+  }
+
+  /** The free yarn: spool -> caught floats -> front stitch. Sags when slack, straightens and pales as it tightens. */
+  private drawStrand(i: number) {
+    const { g, sim: s, pitch: p, u } = this;
+    const st = s.strands[i];
+    if (st.done) return;
+    const [mx, my] = this.spoolMouth(i);
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    if (st.tail > 0) {
+      // Loose end whipping in.
+      const f = Math.min(1, st.tail / 12);
+      const ex = mx + (this.sx(st.tailFrom[0]) - mx) * f, ey = my + (this.sy(st.tailFrom[1]) - my) * f;
+      g.strokeStyle = st.color;
+      g.lineWidth = Math.max(3 * u, p * 0.24);
+      g.beginPath();
+      g.moveTo(mx, my);
+      g.quadraticCurveTo((mx + ex) / 2 + Math.sin(this.time * 30) * p * f, (my + ey) / 2, ex, ey);
+      g.stroke();
+      return;
+    }
+    const pts: number[] = [mx, my];
+    for (const k of st.chain) pts.push(this.sx(s.pos[k * 2]), this.sy(s.pos[k * 2 + 1]));
+    const tmax = Math.max(...st.tension);
+    const taut = Math.min(1, tmax / T_HI);
+    const path = () => {
+      g.beginPath();
+      g.moveTo(pts[0], pts[1]);
+      for (let j = 0; j < st.chain.length; j++) {
+        const x0 = pts[j * 2], y0 = pts[j * 2 + 1], x1 = pts[j * 2 + 2], y1 = pts[j * 2 + 3];
+        const len = Math.hypot(x1 - x0, y1 - y0) / p;
+        const slack = st.rest[j] - len;
+        if (slack <= 0.02 || len < 1e-3) {
+          g.lineTo(x1, y1);
+          continue;
+        }
+        // Parabola with the segment's arc length: sag d = sqrt(3 s (L - s) / 8), drooping downward.
+        const d = Math.min(6, Math.sqrt((3 * len * slack) / 8)) * p;
+        g.quadraticCurveTo((x0 + x1) / 2, (y0 + y1) / 2 + 2 * d, x1, y1);
+      }
+    };
+    const w = Math.max(3 * u, p * 0.26) * (1 - 0.3 * taut);
+    g.strokeStyle = 'rgba(60,30,30,0.25)';
+    g.lineWidth = w + 2 * u;
+    path();
+    g.stroke();
+    g.strokeStyle = st.color;
+    g.lineWidth = w;
+    path();
+    g.stroke();
+    // Ply twist marks scroll with the yarn as it slides toward the spool; they whiten as it goes taut.
+    g.strokeStyle = `rgba(255,255,255,${0.25 + 0.45 * taut})`;
+    g.lineWidth = w * 0.4;
+    g.setLineDash([p * 0.18, p * 0.32]);
+    g.lineDashOffset = st.wound * p;
+    path();
+    g.stroke();
+    g.setLineDash([]);
+    // Catches the strand is dragging on: a knot mark that reddens as it takes the load.
+    for (let j = 0; j + 1 < st.chain.length; j++) {
+      const x = pts[j * 2 + 2], y = pts[j * 2 + 3];
+      const load = Math.min(1, st.tension[j] / T_HI);
+      g.fillStyle = `rgba(${Math.round(120 + 135 * load)},${Math.round(60 - 20 * load)},50,${0.5 + 0.4 * load})`;
+      g.beginPath();
+      g.arc(x, y, p * (0.16 + 0.1 * load + (st.jam === 'catch' ? 0.05 * Math.sin(this.time * 20) : 0)), 0, TAU);
+      g.fill();
+    }
+    // The front stitch: a ring that tightens with the pull against its grip.
+    const k = st.chain[st.chain.length - 1];
+    if (st.holding) {
+      const x = this.sx(s.pos[k * 2]), y = this.sy(s.pos[k * 2 + 1]);
+      const tf = st.tension[st.tension.length - 1];
+      const grip = s.grip(k, st.give);
+      const f = Math.min(1, tf / Math.max(1, Math.min(grip, T_HI * 1.2)));
+      g.strokeStyle = st.jam ? `rgba(220,60,50,${0.5 + 0.3 * Math.sin(this.time * 18)})` : `rgba(255,255,255,${0.4 + 0.5 * f})`;
+      g.lineWidth = 2 * u;
+      g.beginPath();
+      g.arc(x, y, p * (0.75 - 0.25 * f), 0, TAU);
+      g.stroke();
+    }
   }
 
   private drawSpool(slot: number) {
-    const s = this.spools[slot];
-    if (!s) return;
+    const s = this.sim;
+    const st = s.strands[slot];
     const { g, u } = this;
     let [x, y, w, h] = this.spoolRect(slot);
-    const e = Math.max(0, s.enter);
-    const ease = 1 - (1 - e) ** 3;
-    y += (1 - ease) * h * 1.6;
-    x += Math.sin(s.nope * 30) * s.nope * 6 * u;
-    let scale = 1;
-    let alpha = 1;
-    if (s.popT >= 0) {
-      const t = s.popT / 0.45;
-      scale = 1 + Math.sin(Math.min(1, t * 2) * Math.PI) * 0.18;
-      y -= t * t * h * 1.4;
-      alpha = 1 - t * t;
-    }
-    if (s.enter < 0) return;
+    x += Math.sin(this.nope[slot] * 30) * this.nope[slot] * 6 * u;
+    const t0 = st.holding ? Math.min(1, (st.tension[0] ?? 0) / T_HI) : 0;
+    // A held spool sinks a little into the shelf and trembles with the load.
+    if (st.holding) y += 3 * u + Math.sin(this.time * 70) * t0 * 1.2 * u;
     g.save();
-    g.globalAlpha = alpha;
     g.translate(x + w / 2, y + h / 2);
-    g.scale(scale, scale);
     const fw = w, fh = h * 0.13;
     const core = w * 0.42;
-    // Wound yarn: fattens as it fills, with wrap lines scrolling as the spool turns.
-    const fill = Math.min(1, (s.count + (s.head >= 0 ? s.pull : 0)) / s.capacity);
+    const fill = Math.min(1, Math.max(0, st.wound) / st.total);
     const yw = core + (fw * 0.9 - core) * Math.sqrt(fill);
     g.fillStyle = '#e9c9a0';
     g.fillRect(-core / 2, -h / 2 + fh, core, h - 2 * fh);
-    // A first few wraps of colour on the bare core, so an empty spool still says what it wants.
-    g.globalAlpha = alpha * 0.5;
-    g.fillStyle = s.color;
+    g.globalAlpha = 0.5;
+    g.fillStyle = st.color;
     g.fillRect(-core / 2, -h / 2 + fh, core, h - 2 * fh);
-    g.globalAlpha = alpha;
+    g.globalAlpha = 1;
     if (fill > 0) {
-      g.fillStyle = s.color;
-      rounded(g, -yw / 2, -h / 2 + fh, yw, h - 2 * fh, yw * 0.12);
+      g.fillStyle = st.color;
+      g.beginPath();
+      g.roundRect(-yw / 2, -h / 2 + fh, yw, h - 2 * fh, yw * 0.12);
       g.fill();
       g.save();
       g.clip();
       g.strokeStyle = 'rgba(0,0,0,0.16)';
       g.lineWidth = 1.5 * u;
       const step = 5 * u;
-      const off = (s.spin * 3 * u) % step;
+      const off = (this.spin[slot] * 3 * u) % step;
       for (let yy = -h / 2 + fh - step + off; yy < h / 2 - fh; yy += step) {
         g.beginPath();
         g.moveTo(-yw / 2, yy);
@@ -825,47 +585,78 @@ class SpoolSort implements ToyInstance {
       g.fillRect(-yw / 2, -h / 2, yw, h);
       g.restore();
     }
-    // Wooden flanges top and bottom, tinted with the spool's colour so it reads before it's wound.
     for (const fy of [-h / 2, h / 2 - fh]) {
       g.fillStyle = '#b87a4b';
-      rounded(g, -fw / 2, fy, fw, fh, fh * 0.45);
+      g.beginPath();
+      g.roundRect(-fw / 2, fy, fw, fh, fh * 0.45);
       g.fill();
-      g.fillStyle = s.color;
-      g.globalAlpha = alpha * 0.55;
-      rounded(g, -fw / 2 + 3 * u, fy + fh * 0.3, fw - 6 * u, fh * 0.4, fh * 0.2);
+      g.fillStyle = st.color;
+      g.globalAlpha = 0.55;
+      g.beginPath();
+      g.roundRect(-fw / 2 + 3 * u, fy + fh * 0.3, fw - 6 * u, fh * 0.4, fh * 0.2);
       g.fill();
-      g.globalAlpha = alpha;
+      g.globalAlpha = 1;
     }
-    // Capacity pips under the spool.
-    const left = s.capacity - s.count;
-    g.fillStyle = 'rgba(80,40,30,0.55)';
-    g.font = `700 ${12 * u}px ui-rounded, system-ui, sans-serif`;
-    g.textAlign = 'center';
-    g.fillText(left > 0 ? String(left) : '✓', 0, h / 2 + 16 * u);
+    // Tension gauge under the spool: how hard the winch is pulling right now.
+    const gy = h / 2 + 12 * u;
+    g.fillStyle = 'rgba(80,40,30,0.18)';
+    g.beginPath();
+    g.roundRect(-fw / 2, gy - 3 * u, fw, 6 * u, 3 * u);
+    g.fill();
+    if (st.done) {
+      g.fillStyle = 'rgba(80,40,30,0.6)';
+      g.font = `700 ${12 * u}px ui-rounded, system-ui, sans-serif`;
+      g.textAlign = 'center';
+      g.fillText('✓', 0, gy + 5 * u);
+    } else if (t0 > 0) {
+      g.fillStyle = t0 > 0.85 ? '#e0443a' : t0 > 0.5 ? '#f29a3a' : '#6bbf59';
+      g.beginPath();
+      g.roundRect(-fw / 2, gy - 3 * u, fw * t0, 6 * u, 3 * u);
+      g.fill();
+    }
+    // A colour whose stitch is holding back the strand being reeled glows, and so does one whose float just sprang free.
+    const blocking = s.strands.some((o) => o.holding && o.blocker === st.color);
+    const glow = Math.max(this.flash[slot], blocking ? 0.5 + 0.5 * Math.sin(this.time * 8) : 0);
+    if (glow > 0) {
+      g.strokeStyle = `rgba(255,255,255,${glow * 0.9})`;
+      g.lineWidth = 3 * u;
+      g.beginPath();
+      g.roundRect(-fw / 2 - 4 * u, -h / 2 - 4 * u, fw + 8 * u, h + 8 * u, 8 * u);
+      g.stroke();
+    }
     g.restore();
   }
 
-  private drawRope(slot: number) {
-    const s = this.spools[slot];
-    const r = s?.rope;
-    if (!s || !r) return;
-    const { g, u } = this;
-    const n0 = r.loose ? Math.floor((1 - r.out) * (ROPE_N - 1)) : 0;
-    g.lineCap = 'round';
-    g.lineJoin = 'round';
-    const path = () => {
+  private drawPuffs() {
+    const { g, pitch: p } = this;
+    for (const q of this.puffs) {
+      g.globalAlpha = q.life * 0.8;
+      g.fillStyle = q.color;
       g.beginPath();
-      g.moveTo(r.x[n0], r.y[n0]);
-      for (let n = n0 + 1; n < ROPE_N; n++) g.lineTo(r.x[n], r.y[n]);
-    };
-    g.strokeStyle = s.color;
-    g.lineWidth = Math.max(3 * u, this.pitch * 0.22);
-    path();
-    g.stroke();
-    g.strokeStyle = 'rgba(255,255,255,0.35)';
-    g.lineWidth = Math.max(1 * u, this.pitch * 0.07);
-    path();
-    g.stroke();
+      g.arc(this.sx(q.x), this.sy(q.y), p * (0.08 + (1 - q.life) * 0.12), 0, TAU);
+      g.fill();
+    }
+    g.globalAlpha = 1;
+  }
+
+  private drawHint() {
+    if (this.everHeld) return;
+    const { g, u } = this;
+    const [x, y, w] = this.spoolRect(0);
+    const bob = Math.sin(this.time * 4) * 4 * u;
+    const text = 'hold a spool to reel';
+    g.font = `600 ${13 * u}px ui-rounded, -apple-system, sans-serif`;
+    const tw = g.measureText(text).width + 20 * u;
+    const cx = Math.max(tw / 2 + 8 * u, x + w / 2), cy = y - 22 * u + bob;
+    g.fillStyle = 'rgba(20,12,10,0.6)';
+    g.beginPath();
+    g.roundRect(cx - tw / 2, cy - 14 * u, tw, 28 * u, 14 * u);
+    g.fill();
+    g.fillStyle = '#f7e7d4';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(text, cx, cy);
+    g.textBaseline = 'alphabetic';
   }
 
   resize(width: number, height: number) {
@@ -873,21 +664,12 @@ class SpoolSort implements ToyInstance {
     this.width = width;
     this.height = height;
     this.layout();
-    for (let k = 0; k < this.total; k++) {
-      const [hx, hy] = this.home(k);
-      this.x[k] = this.px[k] = hx;
-      this.y[k] = this.py[k] = hy;
-    }
-    for (const s of this.spools) if (s) s.rope = null;
   }
 
   destroy() {
-    this.yarnLoop.stop();
+    this.trickle.stop();
+    this.hiss.stop();
     this.ctx.progress(null);
   }
 }
 
-function rounded(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  g.beginPath();
-  g.roundRect(x, y, w, h, r);
-}

@@ -819,28 +819,21 @@ class Knockdown implements ToyInstance {
     if (it) {
       if (t - it.lastHit < 0.08) return false;
       it.lastHit = t;
-      if (it.mat === 'can') {
-        if (it.cleared && y < COUNTER) snd.play('tick', { pitch: 1.5 + Math.random() * 0.4, gain: gain * 0.5, pan });
-        else {
-          snd.play('knock', { pitch: 1.6 + Math.random() * 0.4, gain: gain * 0.85, pan });
-          // The tin rings on.
-          this.queue(0.035, 'tick', { pitch: 2.6 + Math.random() * 0.3, gain: gain * 0.45, pan });
-          this.queue(0.1, 'tick', { pitch: 2.9 + Math.random() * 0.3, gain: gain * 0.25, pan });
-        }
-      } else if (it.mat === 'jar') {
-        snd.play('knock', { pitch: 1.35, gain: gain * 0.6, pan });
-        snd.play('tick', { pitch: 3.2 + Math.random() * 0.4, gain: gain * 0.5, pan });
-      } else {
-        snd.play('thud', { pitch: 0.95 + Math.random() * 0.15, gain, pan });
-        snd.play('knock', { pitch: 0.7, gain: gain * 0.7, pan });
+      // Each item rings with its own material's modes, pitched by its size and excited by the hit.
+      if (it.mat === 'can') snd.impact('tin', 0.1 * (it.body.hy / 0.3), gain * (it.cleared && y < COUNTER ? 0.5 : 1), { pan });
+      else if (it.mat === 'jar') snd.impact('glass', 0.07 + it.body.hy * 0.25, gain * 0.9, { pan });
+      else {
+        snd.impact('wood', 0.3, gain, { pan });
+        snd.play('thud', { pitch: 0.95 + Math.random() * 0.15, gain: gain * 0.6, pan });
       }
       return true;
     }
     const d = this.debrisOf.get(body);
     if (!d || t - d.lastHit < 0.06) return false;
     d.lastHit = t;
-    if (d.kind === 'shard') snd.play('tick', { pitch: 2.8 + Math.random() * 0.9, gain: gain * 0.3, pan });
-    else snd.play('knock', { pitch: d.kind === 'lid' ? 1.2 : 0.8, gain: gain * 0.5, pan });
+    // Shards tinkle higher the smaller they are; lids ring as tin, planks knock as wood.
+    if (d.kind === 'shard') snd.impact('glass', Math.max(0.015, Math.max(body.hx, body.hy) * 0.5), gain * 0.45, { pan });
+    else snd.impact(d.kind === 'lid' ? 'tin' : 'wood', d.kind === 'lid' ? 0.07 : 0.22, gain * 0.6, { pan });
     return true;
   }
 

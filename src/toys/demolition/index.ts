@@ -527,7 +527,8 @@ class Demolition implements ToyInstance {
       const gain = Math.min(1, (im.speed - 3) / 10);
       const pan = this.pan(im.x);
       if (im.y < 0.2 && mass > 1.2 && im.speed > 5) snd.play('thud', { pitch: Math.max(0.5, 1.1 - mass * 0.08), gain, pan });
-      else snd.play('knock', { pitch: Math.max(0.55, Math.min(1.8, 1.5 / Math.sqrt(Math.max(0.2, mass)))), gain: gain * 0.8, pan });
+      // Bricks ring briefly with their own modes; heavier ones are bigger, so lower.
+      snd.impact('stone', 0.12 * Math.sqrt(Math.max(0.2, mass)), gain * 0.9, { pan });
     }
     // Collapse bed: fraction of loose bodies moving at speed.
     let moving = 0;

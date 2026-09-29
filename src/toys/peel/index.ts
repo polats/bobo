@@ -1,5 +1,5 @@
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
-import type { Loop } from '../../shell/sound';
+import type { Loop, Slip } from '../../shell/sound';
 import { Film, type Handle } from './sim';
 import { PeelRenderer, CAM_D } from './render';
 import { DESIGNS, SCENES, makeScene, paintSticker, type Scene, type SceneId } from './art';
@@ -77,6 +77,8 @@ class PeelIt implements ToyInstance {
   private printCanvas = document.createElement('canvas');
   private grabs = new Map<number, Grab>();
   private crackle: Loop;
+  /** The glue's stick-slip: slip pulses whose rate rises with peel speed, so a yank screeches. */
+  private screech: Slip;
   private relRate = 0;
   private relTick = 0;
   private relBuzz = 0;
@@ -106,6 +108,7 @@ class PeelIt implements ToyInstance {
     this.gl = gl;
     this.renderer = new PeelRenderer(gl);
     this.crackle = ctx.sound.loop('crackle');
+    this.screech = ctx.sound.slip();
     this.width = ctx.canvas.width;
     this.height = ctx.canvas.height;
     this.style = document.createElement('style');
@@ -558,7 +561,11 @@ class PeelIt implements ToyInstance {
     const n = f.releasedThisFrame;
     if (dt > 0) this.relRate += (n / dt - this.relRate) * Math.min(1, dt * 10);
     const pan = n ? this.pan(this.toScreen(f.releaseX, 0, 0)[0] / this.width) : 0;
-    this.crackle.set(Math.min(1, this.relRate / 260) * 0.9, Math.min(1, 0.25 + this.handSpeed / 2));
+    this.crackle.set(Math.min(1, this.relRate / 260) * 0.5, Math.min(1, 0.25 + this.handSpeed / 2));
+    // Peeling tape advances in stick-slip jumps: slow pulls crackle as separate slips, fast pulls
+    // run them together into a screech whose pitch rises with speed.
+    const rel0 = Math.min(1, this.relRate / 260);
+    this.screech.set(rel0 * Math.min(1, 0.2 + this.handSpeed * 0.5), 25 + this.handSpeed * 420, 900 + this.handSpeed * 900, pan);
     // A crisp buzz that follows how fast the glue is letting go.
     const rel = Math.min(1, this.relRate / 260);
     if (rel > 0.02) this.ctx.hapticLevel(0.2 + 0.6 * rel, 0.85);
@@ -566,7 +573,8 @@ class PeelIt implements ToyInstance {
     this.relBuzz += n;
     if (this.relTick >= 8) {
       this.relTick = 0;
-      this.ctx.sound.play('tick', { pitch: 2 + Math.min(1, this.handSpeed / 2), gain: 0.28, pan });
+      // A cluster of glue letting go buckles the film: a crinkle click whose size is random, big ones rare.
+      this.ctx.sound.crumple(Math.min(1, 0.15 + Math.random() ** 3 * 0.8), { pan, stiffness: 0.6 });
     }
     if (this.relBuzz >= 6) {
       this.relBuzz = 0;
@@ -625,6 +633,7 @@ class PeelIt implements ToyInstance {
 
   destroy() {
     this.crackle.stop();
+    this.screech.stop();
     clearTimeout(this.hintTimer);
     this.hud.remove();
     this.style.remove();

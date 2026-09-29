@@ -278,7 +278,8 @@ class Pool implements ToyInstance {
         const x = Math.random();
         this.drop(x, Math.random(), 0.012 + Math.random() * 0.01, -0.004 - Math.random() * 0.004, false);
         // Only a few audible plips a second on top of the bed, however heavy the rain.
-        if (Math.random() < 4 / this.cfg.rainRate) this.ctx.sound.play('plop', { pitch: 1.6 + Math.random() * 0.8, gain: 0.15, pan: this.pan(x) });
+        // Raindrops each trap a tiny bubble (the high 'plink' of rain on water); a few dozen a second at most.
+        if (Math.random() < 30 / this.cfg.rainRate) this.ctx.sound.bubble(0.0004 + Math.random() * 0.0008, { gain: 0.35, pan: this.pan(x) });
       }
     }
     this.rainLoop.set(this.cfg.rain ? 0.12 + Math.min(1, this.cfg.rainRate / 60) * 0.3 : 0, 0.4 + Math.min(1, this.cfg.rainRate / 60) * 0.4);
@@ -309,7 +310,9 @@ class Pool implements ToyInstance {
         // Bigger pokes plop lower; stronger pokes plop louder and turn into a splash.
         const size = c.dropSize / 0.035;
         const force = c.dropStrength / 0.012;
-        this.ctx.sound.play('plop', { pitch: 1.1 / Math.sqrt(size), gain: Math.min(1, 0.35 + force * 0.25), pan: this.pan(p.x) });
+        this.ctx.sound.play('plop', { pitch: 1.1 / Math.sqrt(size), gain: Math.min(0.6, 0.2 + force * 0.15), pan: this.pan(p.x) });
+        // A bigger, harder poke traps more air, in bigger bubbles.
+        this.ctx.sound.bubbles(1 + force * size * 2, 0.0008, 0.002 + 0.003 * Math.min(2, size), { gain: Math.min(1, 0.4 + force * 0.2), pan: this.pan(p.x) });
         if (force * size > 2) this.ctx.sound.play('splash', { pitch: 1 / Math.sqrt(size), gain: Math.min(0.8, force * size * 0.15), pan: this.pan(p.x) });
         continue;
       }
@@ -347,6 +350,7 @@ class Pool implements ToyInstance {
       // Thrown ducks land with a splash; a gentle drop is just a plop.
       if (speed > 0.6) this.ctx.sound.play('splash', { pitch: 1.2 - Math.min(speed, 3) * 0.1, gain: Math.min(1, 0.3 + speed * 0.2), pan: this.pan(d.x) });
       else this.ctx.sound.play('plop', { pitch: 0.8, gain: 0.5, pan: this.pan(d.x) });
+      this.ctx.sound.bubbles(2 + speed * 6, 0.001, 0.006, { gain: Math.min(1, 0.4 + speed * 0.3), pan: this.pan(d.x) });
     }
     for (const id of this.lastDrop.keys()) if (!this.ctx.pointers.active.has(id)) this.lastDrop.delete(id);
   }

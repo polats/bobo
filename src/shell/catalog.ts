@@ -48,6 +48,8 @@ export interface Update {
 
 const FEEL: Update = { date: '2026-09-29T17:58:04-04:00', note: 'Continuous haptics: a buzz in your hand that follows the action (Core Haptics on iPhone).', minor: true };
 
+const RINGS: Update = { date: '2026-09-29T18:46:29-04:00', note: 'Sound from the simulation: struck things ring with their own material and size; splashes and drops trap bubbles that ring at their own pitch.', minor: true };
+
 const SOUND: Update = { date: '2026-09-29T11:46:37-04:00', note: 'Sound: procedural effects that follow the physics, with a mute toggle.', minor: true };
 
 /** What changed since each toy shipped, newest first. Add a line when a toy gets a notable update. */
@@ -57,7 +59,11 @@ const UPDATES: Record<string, Update[]> = {
     { date: '2026-09-29T11:21:46-04:00', note: 'Merges smoosh together and pop: hit-stop, a stretched spring-back, a shockwave that jolts the pile.' },
     { date: '2026-09-29T11:09:10-04:00', note: 'Fixed gummies getting stuck inside each other and flying off.' },
   ],
-  spool: [{ date: '2026-09-29T11:57:26-04:00', note: 'The rack never jams: spools now bring colours you can reach.' }],
+  spool: [
+    { date: '2026-09-29T18:46:29-04:00', note: 'Real yarn tension: each colour is its own strand; floats caught behind other colours drag the knit until they slip free with a snap.' },
+    { date: '2026-09-29T11:57:26-04:00', note: 'The rack never jams: spools now bring colours you can reach.', minor: true },
+  ],
+  foundry: [{ date: '2026-09-29T18:46:29-04:00', note: 'Rings from its own shape: seams and voids, and where you tap, change the note. Metal now rises into bottom-fed moulds.' }],
   fire: [{ date: '2026-09-29T12:34:05-04:00', note: 'Oxygen: drop a glass jar over the fire to choke it to embers, lift it for a whoosh of flame. Blowing feeds the fire air.' }, SOUND],
   demolition: [
     { date: '2026-09-29T12:36:24-04:00', note: 'The wrecking ball now knocks sleeping towers apart, rubble stops rolling, and tall stacks stand still.' },
@@ -66,12 +72,15 @@ const UPDATES: Record<string, Update[]> = {
   goo: [{ date: '2026-09-29T12:34:05-04:00', note: 'Snow and sand glitter: each grain catches the light as it tumbles (toggle in Tune).' }, SOUND],
 };
 
+/** Toys whose sound now comes from the resonator pool. */
+const RINGING = ['knockdown', 'demolition', 'kintsugi', 'pour', 'splash', 'pool', 'peel'];
+
 /** Toys that drive ctx.hapticLevel. */
 const FELT = ['rinse', 'mow', 'peel', 'pour', 'spool', 'dig', 'foundry', 'cloth'];
 
 /** A toy's updates, newest first (the shared sound and haptics passes included). */
 export function updates(id: string): Update[] {
-  const own = [...(FELT.includes(id) ? [FEEL] : []), ...(UPDATES[id] ?? [])];
+  const own = [...(RINGING.includes(id) ? [RINGS] : []), ...(FELT.includes(id) ? [FEEL] : []), ...(UPDATES[id] ?? [])];
   return own.includes(SOUND) || ['merge', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints'].includes(id) ? own : [...own, SOUND];
 }
 

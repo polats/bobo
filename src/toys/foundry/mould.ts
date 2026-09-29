@@ -1,5 +1,7 @@
-// Ram a flask full of sand around a cavity: pouring basin on top, a sprue down to the cavity, an
-// iron frame and bottom board holding it all, the grate floor below.
+// Ram a flask full of sand around a bottom-gated cavity: a pouring basin and sprue down the left
+// side, a runner along the bottom, ingates up into the cavity, and an open riser on its top. Metal
+// falls down the sprue, runs along the runner, and the head in the sprue pushes it up into the
+// cavity and on up the riser: when metal shows in the riser, the mould is full.
 
 import { FRAME, FLOOR, FoundrySim, SAND } from './sim';
 import type { Shape } from './shapes';
@@ -18,12 +20,15 @@ export interface Layout {
 export interface Mould {
   shape: Shape;
   cavTop: number;
-  /** Cell indices of the cavity and of the basin + sprue. */
+  /** Column the crucible pours into (the sprue), and the cavity's centre column. */
+  pourX: number;
+  cavX: number;
+  /** Cell indices of the cavity and of the gating system. */
   cav: Int32Array;
   gate: Int32Array;
   /** Packed sand cells when rammed (for "how broken is it"). */
   sand: number;
-  /** Metal needed to fill cavity + gate. */
+  /** Metal needed to fill cavity + gating. */
   volume: number;
 }
 
@@ -50,31 +55,44 @@ export function buildMould(sim: FoundrySim, L: Layout, shape: Shape): Mould {
   for (let y = flaskTop - 3; y <= flaskBot; y++)
     for (const x of [cx - half - 2, cx - half - 1, cx + half + 1, cx + half + 2]) cells[y * W + x] = FRAME;
   for (let x = cx - half - 2; x <= cx + half + 2; x++) cells[flaskBot * W + x] = FRAME;
-  const cavTop = Math.min(flaskTop + shape.sprue, flaskBot - 5 - shape.h);
+  const pourX = cx - half + 8, cavX = cx + 7;
+  const runTop = flaskBot - 8, runBot = runTop + 3;
+  const cavBot = runTop - 3, cavTop = cavBot - shape.h;
   const cav: number[] = [], gate: number[] = [];
-  for (let y = 0; y <= shape.h; y++)
-    for (let dx = -half + 2; dx <= half - 2; dx++) {
-      if (!shape.inside(dx, y)) continue;
-      const k = (cavTop + y) * W + cx + dx;
-      cells[k] = 0;
-      mask[k] = 1;
-      cav.push(k);
-    }
-  // Basin: a cone narrowing to the sprue; the sprue runs down until it meets the cavity.
-  for (let y = flaskTop; y < cavTop + 2; y++) {
+  const open = (x: number, y: number, m: number) => {
+    const k = y * W + x;
+    if (mask[k] || cells[k] !== SAND) return;
+    cells[k] = 0;
+    mask[k] = m;
+    (m === 1 ? cav : gate).push(k);
+  };
+  for (let y = 0; y <= shape.h; y++) for (let dx = -half + 2; dx <= half - 2; dx++) if (shape.inside(dx, y)) open(cavX + dx, cavTop + y, 1);
+  // Basin: a cone narrowing into the sprue, which runs down to the runner.
+  for (let y = flaskTop; y <= runBot; y++) {
     const j = y - flaskTop;
     const hw = j < 6 ? 6.5 - j * 0.85 : 1.5;
-    for (let dx = -Math.floor(hw); dx <= Math.floor(hw); dx++) {
-      const k = y * W + cx + dx;
-      if (mask[k]) continue;
-      cells[k] = 0;
-      mask[k] = 2;
-      gate.push(k);
-    }
+    for (let dx = -Math.floor(hw); dx <= Math.floor(hw); dx++) open(pourX + dx, y, 2);
+  }
+  // Runner along the bottom, ingates up into the cavity until they meet it.
+  const far = Math.max(...shape.gates.map((g) => Math.round(cavX + g))) + 1;
+  for (let y = runTop; y <= runBot; y++) for (let x = pourX - 1; x <= far; x++) open(x, y, 2);
+  for (const g of shape.gates)
+    for (let x = Math.round(cavX + g) - 1; x <= Math.round(cavX + g) + 1; x++)
+      for (let y = runTop - 1; y > cavTop && mask[y * W + x] !== 1; y--) open(x, y, 2);
+  // Riser: from the cavity's top up through the cope to the open air.
+  for (let x = Math.round(cavX + shape.riser) - 1; x <= Math.round(cavX + shape.riser) + 1; x++) {
+    let y = cavTop;
+    while (y <= cavBot && mask[y * W + x] !== 1) y++;
+    if (y > cavBot) continue;
+    for (y--; y >= flaskTop; y--) open(x, y, 2);
   }
   let sand = 0;
   for (let y = flaskTop; y < flaskBot; y++) for (let x = cx - half; x <= cx + half; x++) if (cells[y * W + x] === SAND) sand++;
   sim.lo = flaskTop - 30;
   sim.hi = floorY;
-  return { shape, cavTop, cav: Int32Array.from(cav), gate: Int32Array.from(gate), sand, volume: cav.length + gate.length };
+  sim.hx0 = cx - half - 3;
+  sim.hx1 = cx + half + 4;
+  sim.hy0 = flaskTop - 6;
+  sim.hy1 = flaskBot + 1;
+  return { shape, cavTop, pourX, cavX, cav: Int32Array.from(cav), gate: Int32Array.from(gate), sand, volume: cav.length + gate.length };
 }

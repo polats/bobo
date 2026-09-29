@@ -598,6 +598,8 @@ class Kintsugi implements ToyInstance {
     s.fa = wrap(s.a);
     s.vx = s.vy = s.w = s.vz = 0;
     this.seated[this.shards.indexOf(s)] = true;
+    // Seating rings the shard softly against its neighbours.
+    this.ctx.sound.impact('ceramic', 0.02 + 0.08 * Math.min(1, s.rIn / (40 * this.S)), 0.3);
     this.gold.updateOpen(this.seated);
     this.crackPath = null;
     this.goldPath = null;
@@ -670,10 +672,11 @@ class Kintsugi implements ToyInstance {
       d.s = (1 + Math.random() * 2.2) * S;
     }
     const snd = this.ctx.sound;
-    snd.play('snap', { pitch: 1.25, gain: 1 });
-    snd.play('knock', { pitch: 0.75, gain: 1 });
-    snd.play('crumble', { pitch: 1.8, gain: 0.7 });
-    snd.play('tick', { pitch: 2.2, gain: 0.8 });
+    snd.play('snap', { pitch: 1.25, gain: 0.8 });
+    snd.play('crumble', { pitch: 1.8, gain: 0.5 });
+    // The whole piece rings as porcelain at its own size, then every shard rings at its own.
+    snd.impact('ceramic', 0.18, 1);
+    for (const sh of this.shards) snd.impact('ceramic', 0.02 + 0.08 * Math.min(1, sh.rIn / (40 * S)), 0.4 + Math.random() * 0.3, { pan: (sh.x / (this.width / this.ctx.pixelRatio)) * 2 - 1 });
     this.ctx.haptic('heavy');
     this.setHint('Drag the shards back into place');
   }
@@ -716,7 +719,8 @@ class Kintsugi implements ToyInstance {
             if (this.time - this.lastBounce > 0.03) {
               this.lastBounce = this.time;
               const small = Math.min(1, s.rIn / (40 * S));
-              this.ctx.sound.play(hit > 400 * S ? 'knock' : 'tick', { pitch: 1.9 - small * 0.6, gain: Math.min(1, hit / (900 * S)), pan: (s.x / W) * 2 - 1 });
+              // A porcelain shard rings at a pitch set by its size.
+              this.ctx.sound.impact('ceramic', 0.02 + 0.08 * small, Math.min(1, hit / (900 * S)), { pan: (s.x / W) * 2 - 1 });
             }
           } else s.vz = 0;
         }

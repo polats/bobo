@@ -1,3 +1,4 @@
+import { ResonatorPool } from './resonators';
 // Procedural sound: every voice is synthesised on the fly with Web Audio (no audio files), so it
 // costs nothing to download and every hit can vary in pitch and loudness with the physics.
 // One-shots are fire-and-forget node graphs; loops are a looping noise bed through a filter whose
@@ -43,6 +44,16 @@ export interface Mode {
   decay: number;
 }
 
+/** What a struck thing is made of: sets its mode pattern, how long it rings, and its size-to-pitch scale. */
+export type Material = 'glass' | 'tin' | 'wood' | 'ceramic' | 'stone' | 'bronze';
+
+/** A continuous stick-slip source (tape peeling, a finger on a wet rim): update it every frame. */
+export interface Slip {
+  /** Level 0..1, slip pulses per second, and the resonance the pulses excite (Hz). */
+  set(level: number, rate: number, freq: number, pan?: number): void;
+  stop(): void;
+}
+
 export interface Sound {
   play(voice: Voice, opts?: PlayOpts): void;
   loop(kind: LoopKind): Loop;
@@ -51,6 +62,16 @@ export interface Sound {
    * (van den Doel & Pai). Toys that compute their own modes (a cast bell, a shard) pass them here.
    */
   modes(partials: Mode[], opts?: { gain?: number; pan?: number; strike?: number }): void;
+  /** One air bubble of this radius (metres) ringing at its Minnaert frequency, pitching up as it decays. */
+  bubble(radius: number, opts?: { gain?: number; pan?: number }): void;
+  /** A burst of `count` bubbles with radii spread between rMin and rMax (small ones far more common). */
+  bubbles(count: number, rMin: number, rMax: number, opts?: { gain?: number; pan?: number }): void;
+  /** A struck object ringing with its own modes: material, size (metres), how hard (0..1). */
+  impact(material: Material, size: number, strength: number, opts?: { pan?: number }): void;
+  /** One buckling click from a crumpling or creasing sheet; energy 0..1, stiffer sheets click higher. */
+  crumple(energy: number, opts?: { pan?: number; stiffness?: number }): void;
+  /** A stick-slip voice for friction sounds. */
+  slip(): Slip;
 }
 
 const MAX_VOICES = 14;
@@ -153,8 +174,26 @@ function audio(): AudioContext | null {
   master = ctx.createGain();
   master.gain.value = enabled ? 0.8 : 0;
   master.connect(comp).connect(ctx.destination);
+  pool = new ResonatorPool(ctx, master);
   return ctx;
 }
+
+let pool: ResonatorPool | null = null;
+let slipIds = 0;
+
+/**
+ * Mode patterns (frequency ratios), ring time for the fundamental, and pitch at 10 cm. Ratios: a free
+ * bar for glass (1, 2.76, 5.40, 8.93), a thin cylinder's clustered shell modes for tin, heavily
+ * damped low modes for wood and stone, bowl-like ratios for porcelain, and bell partials for bronze.
+ */
+const MATERIAL: Record<Material, { ratios: number[]; ring: number; f10: number; noise: number; level: number }> = {
+  glass: { ratios: [1, 2.76, 5.4, 8.93], ring: 1.1, f10: 1250, noise: 0.25, level: 1 },
+  tin: { ratios: [1, 1.52, 2.34, 3.3, 4.21, 5.3], ring: 0.45, f10: 880, noise: 0.35, level: 1.3 },
+  wood: { ratios: [1, 2.2, 3.7, 5.1], ring: 0.07, f10: 420, noise: 0.6, level: 2.2 },
+  ceramic: { ratios: [1, 2.32, 4.25, 6.63], ring: 0.8, f10: 1050, noise: 0.3, level: 1.1 },
+  stone: { ratios: [1, 1.71, 2.62, 3.9], ring: 0.05, f10: 320, noise: 0.8, level: 2.4 },
+  bronze: { ratios: [0.5, 1, 1.19, 1.5, 2, 2.51], ring: 2.8, f10: 700, noise: 0.15, level: 0.55 },
+};
 
 function makeBuffer(c: AudioContext, n: number, f: (i: number) => number) {
   const b = c.createBuffer(1, n, c.sampleRate);
@@ -231,6 +270,13 @@ export const sound: Sound = {
 
   modes(partials, opts = {}) {
     if (!enabled) return;
+    if (pool?.ready && ctx?.state === 'running') {
+      const total = partials.reduce((a, m) => a + Math.abs(m.amp), 0) || 1;
+      const g = Math.max(0, Math.min(1, opts.gain ?? 1)) * 0.5;
+      for (const m of partials.slice(0, 16)) pool.send({ f: m.freq, a: (g * Math.abs(m.amp)) / total, d: m.decay, pan: opts.pan });
+      if (opts.strike !== undefined && master) burst(ctx, ctx.currentTime, 0.012, master, 0.3 * g, 'bandpass', 800 + opts.strike * 4000, 600, 0.8, 0.001);
+      return;
+    }
     const c = audio();
     if (!c || !master || c.state !== 'running' || active >= MAX_VOICES || !partials.length) return;
     const now = c.currentTime;
@@ -268,6 +314,86 @@ export const sound: Sound = {
       active--;
       tail.disconnect();
     }, (longest + 0.15) * 1000);
+  },
+
+  bubble(radius, opts = {}) {
+    if (!enabled) return;
+    const c = audio();
+    if (!c || c.state !== 'running') return;
+    const r = Math.max(0.0002, Math.min(0.02, radius));
+    const f = 3.26 / r;
+    if (!pool?.ready) {
+      sound.play('plop', { pitch: f / 900, gain: opts.gain, pan: opts.pan });
+      return;
+    }
+    // van den Doel's damping for a bubble at frequency f (per second), and the upward chirp.
+    const d = 0.043 * f + 0.0014 * Math.pow(f, 1.5);
+    const t60 = 6.9 / d;
+    const g = Math.max(0, Math.min(1, opts.gain ?? 1)) * Math.min(1, r * 350) * 1.2;
+    pool.send({ f, a: g, d: t60, chirp: 0.1 * d, pan: opts.pan });
+  },
+
+  bubbles(count, rMin, rMax, opts = {}) {
+    const n = Math.min(24, Math.max(0, Math.round(count)));
+    for (let i = 0; i < n; i++) {
+      // Power-law radii: most bubbles are small, a few are big.
+      const u = Math.random() ** 2.2;
+      sound.bubble(rMin + (rMax - rMin) * u, { gain: (opts.gain ?? 1) * (0.5 + Math.random() * 0.5), pan: (opts.pan ?? 0) + (Math.random() - 0.5) * 0.3 });
+    }
+  },
+
+  impact(material, size, strength, opts = {}) {
+    if (!enabled) return;
+    const c = audio();
+    if (!c || c.state !== 'running') return;
+    const s = Math.max(0, Math.min(1, strength));
+    if (s < 0.01) return;
+    const m = MATERIAL[material];
+    const f0 = m.f10 * (0.1 / Math.max(0.01, size));
+    if (!pool?.ready) {
+      sound.play(material === 'glass' || material === 'ceramic' ? 'tick' : 'knock', { pitch: f0 / 600, gain: s, pan: opts.pan });
+      return;
+    }
+    // Harder hits reach the higher modes; each strike lands somewhere slightly different.
+    m.ratios.forEach((k, i) => {
+      const f = f0 * k * (0.985 + Math.random() * 0.03);
+      if (f > 15000) return;
+      const a = (m.level * s * 0.5 * (0.55 + Math.random() * 0.45)) / Math.pow(i + 1, 1.1 - 0.6 * s);
+      pool!.send({ f, a, d: m.ring * Math.pow(f0 / f, 0.7), pan: opts.pan });
+    });
+    // The contact itself: a short noise tick, brighter and louder for harder, stiffer hits.
+    const now = c.currentTime;
+    if (master && now - (lastPlay.get('knock') ?? -1) > 0.025) {
+      lastPlay.set('knock', now);
+      burst(c, now, 0.006 + 0.01 * m.noise, master, 0.25 * s * m.noise, 'bandpass', Math.min(9000, f0 * 3), f0, 0.9, 0.0008);
+    }
+  },
+
+  crumple(energy, opts = {}) {
+    if (!enabled) return;
+    const c = audio();
+    if (!c || c.state !== 'running') return;
+    const e = Math.max(0, Math.min(1, energy));
+    if (!pool?.ready) {
+      sound.play('tick', { gain: e, pitch: 1.5, pan: opts.pan });
+      return;
+    }
+    // A buckle snaps a small patch of sheet: a couple of high, very short modes.
+    const base = (1800 + 2600 * (opts.stiffness ?? 0.5)) * (0.7 + Math.random() * 0.8);
+    for (let i = 0; i < 2; i++) pool.send({ f: base * (1 + i * 1.7), a: e * 0.35 / (i + 1), d: 0.012 + 0.02 * Math.random(), pan: opts.pan });
+  },
+
+  slip() {
+    const id = ++slipIds;
+    return {
+      set(level, rate, freq, pan = 0) {
+        if (!pool?.ready || ctx?.state !== 'running') return;
+        pool.send({ k: 'slip', id, level: enabled ? Math.max(0, Math.min(1, level)) * 0.35 : 0, rate, f1: freq, f2: freq * 2.3, q: 0.012 + 0.03 / (1 + freq / 1000), pan });
+      },
+      stop() {
+        pool?.send({ k: 'slip', id, level: 0, stop: true });
+      },
+    };
   },
 
   loop(kind) {

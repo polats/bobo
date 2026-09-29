@@ -129,6 +129,7 @@ class PourSort implements ToyInstance {
   private sel = -1;
   private moves = 0;
   private time = 0;
+  private lastBubble = 0;
   private doneAt = -1;
   private celebrated = false;
   private celebrations = 0;
@@ -729,6 +730,13 @@ class PourSort implements ToyInstance {
 
   private splashIn(ti: number, speed: number, x: number) {
     const t = this.tubes[ti];
+    // Each drop that plunges in fast enough traps an air bubble; faster drops trap bigger ones,
+    // and each rings at its own Minnaert pitch. Capped to a few dozen a second.
+    if (speed > 120 && this.time - this.lastBubble > 0.035) {
+      this.lastBubble = this.time;
+      const r = 0.0008 + Math.min(0.004, (speed - 120) * 0.000006) * Math.random();
+      this.ctx.sound.bubble(r, { gain: Math.min(1, 0.25 + speed / 1500), pan: this.pan(ti) });
+    }
     t.v2 -= Math.min(30, speed * 0.03) * this.cfg.slosh;
     t.v1 += ((x - t.tx) / this.shape.r) * Math.min(20, speed * 0.02) * this.cfg.slosh;
     const p = this.pours.find((q) => q.b === ti && !q.hit);

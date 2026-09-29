@@ -530,7 +530,8 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
         grabs.set(ptr.id, g);
         if (wet) {
           ctx.haptic('light');
-          ctx.sound.play('plop', { pitch: 0.9, gain: 0.4, pan: panX(hit[0]) });
+          ctx.sound.play('plop', { pitch: 0.9, gain: 0.25, pan: panX(hit[0]) });
+          ctx.sound.bubbles(3, 0.001, 0.004, { gain: 0.6, pan: panX(hit[0]) });
         }
       }
       if (g.mode === 'push') {
@@ -576,6 +577,8 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
         if (sloshCool <= 0) {
           sloshCool = 0.25;
           ctx.sound.play('splash', { gain: Math.min(0.8, jolt * 0.4), pan: clamp(shake[0], -1, 1) * 0.6 });
+          // A slosh entrains a cloud of bubbles: many small, a few big.
+          ctx.sound.bubbles(4 + jolt * 8, 0.0008, 0.006, { gain: Math.min(1, 0.3 + jolt * 0.3), pan: clamp(shake[0], -1, 1) * 0.6 });
         }
       }
     }
@@ -626,7 +629,9 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
       // Hitting the water: splash scaled by how fast the ball was coming down.
       if (sub > 0 && !b.wet && b.vel[1] < -8) {
         const hit = Math.min(1, -b.vel[1] / 60);
-        ctx.sound.play('splash', { pitch: 1.3 - hit * 0.5, gain: 0.3 + hit * 0.6, pan: panX(b.pos[0]) });
+        ctx.sound.play('splash', { pitch: 1.3 - hit * 0.5, gain: 0.2 + hit * 0.5, pan: panX(b.pos[0]) });
+        // The ball drags air under with it: harder hits trap more and bigger bubbles, so they sound deeper.
+        ctx.sound.bubbles(3 + hit * 14, 0.001, 0.003 + hit * 0.007, { gain: 0.5 + hit * 0.5, pan: panX(b.pos[0]) });
         if (hit > 0.4) ctx.haptic('medium');
       }
       b.wet = sub > 0;
@@ -755,6 +760,7 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
     if (surfaceFlow / 30 > 0.55 && target > flowLevel + 0.2 && sloshCool <= 0) {
       sloshCool = 0.5;
       ctx.sound.play('splash', { pitch: 0.9, gain: Math.min(0.7, surfaceFlow / 60) });
+      ctx.sound.bubbles(surfaceFlow / 8, 0.0008, 0.005, { gain: Math.min(1, surfaceFlow / 60) });
     }
     slosh = Math.max(0, slosh - dt * 1.5);
     churn = 0;

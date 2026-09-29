@@ -2,39 +2,46 @@ import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
 import type { Loop } from '../../shell/sound';
 import { BODY, INNER, area, areaBelow, place } from './crucible';
 import { buildMould, layoutFor, type Layout, type Mould } from './mould';
-import { SHAPES, makeShape, type ShapeId } from './shapes';
+import { C_METAL, C_SEAM, C_VOID, grade, modeFields, nearestNode, solveModes, strikePartials, type Grade, type ModalResult } from './modal';
+import { SHAPES, makeShape, type Shape, type ShapeId } from './shapes';
 import { FRAME, FREEZE, FoundrySim, LOOSE, METAL, SAND, type Assessment } from './sim';
 
 export const foundryToy: Toy = {
   id: 'foundry',
   title: 'Foundry',
-  blurb: 'Pour glowing bronze into a sand mould, let it cool, smash the mould open and ring what you cast. A steady pour rings true; a hesitant one clunks.',
-  tech: 'Falling-sand CA with molten metal cells + temperature · Canvas 2D',
+  blurb: 'Pour glowing bronze down the sprue and watch the head push it up into the mould from below, break it out, then tap the casting anywhere. It rings with its own computed modes, so a cold lap in the lip or a misrun at the crown changes the note.',
+  tech: 'Falling-sand metal + conservative heat into sand · hydrostatic head (region labelling) for bottom gating · 2D FEM modal analysis (shift-invert Lanczos) → modal synthesis · Canvas 2D',
   swatch: 'linear-gradient(160deg,#1a100c 0 35%,#ff9a2a 50%,#fff1b8 56%,#b8733a 64%,#3a2418 100%)',
   refs: [
+    {
+      short: "O'Brien 2002",
+      title: "Synthesizing Sounds from Rigid-Body Simulations (O'Brien, Shen & Gatchalian, SCA 2002)",
+      url: 'https://doi.org/10.1145/545261.545290',
+      use: 'Finite-element mesh of the object, eigen-decomposition of K and M into modes, Rayleigh damping, and a strike exciting each mode by its shape at the contact point.',
+    },
+    {
+      short: 'van den Doel 1998',
+      title: 'The Sounds of Physical Shapes (van den Doel & Pai, Presence 1998)',
+      url: 'https://doi.org/10.1162/105474698565794',
+      use: 'The note as a sum of exponentially decaying sines, one per mode, with amplitudes that depend on where the object is struck.',
+    },
+    {
+      short: 'Ericsson & Ruhe 1980',
+      title: 'The Spectral Transformation Lanczos Method for Large Sparse Generalized Symmetric Eigenvalue Problems (Math. Comp. 1980)',
+      url: 'https://doi.org/10.1090/S0025-5718-1980-0583502-2',
+      use: 'Shift-invert Lanczos on (K + sM)^-1 M to get the lowest modes from a banded Cholesky factor, with the rigid-body modes deflated.',
+    },
+    {
+      short: 'Ungar & Kerwin 1962',
+      title: 'Loss Factors of Viscoelastic Systems in Terms of Energy Concepts (JASA 1962)',
+      url: 'https://doi.org/10.1121/1.1918227',
+      use: "Each mode's extra damping from seams and voids, found by weighting each element's loss factor by its share of the mode's strain energy.",
+    },
     {
       short: 'Noita',
       title: 'Exploring the Tech and Design of Noita (Petri Purho, GDC 2019)',
       url: 'https://www.youtube.com/watch?v=prXuyMCgbTc',
-      use: 'Falling-sand cells updated bottom-up; liquids that flow and solids that crumble in one grid.',
-    },
-    {
-      short: 'Sandspiel',
-      title: 'Sandspiel (Max Bittker, 2019)',
-      url: 'https://sandspiel.club/',
-      use: 'Per-material cellular-automaton rules; here molten metal whose flow depends on its temperature.',
-    },
-    {
-      short: 'Sand casting',
-      title: 'Sand casting (Wikipedia)',
-      url: 'https://en.wikipedia.org/wiki/Sand_casting',
-      use: 'Flask, pouring basin, sprue and cavity; shaking the casting out of the sand.',
-    },
-    {
-      short: 'Cold shut',
-      title: 'Casting defect (Wikipedia)',
-      url: 'https://en.wikipedia.org/wiki/Casting_defect',
-      use: 'Misruns and cold shuts: metal that freezes before filling, or fronts too cold to fuse. They set the ring.',
+      use: 'The falling-sand update pattern: a bottom-up cell scan with alternating direction.',
     },
   ],
   async create(ctx) {
@@ -49,8 +56,15 @@ const MAX_RATE = 360;
 const TILT_MAX = 1.95;
 /** Crucible holds this much more than the mould needs, so a long pour overflows. */
 const SPARE = 1.3;
-/** Quality at which a casting rings true. */
-const TRUE_Q = 0.9;
+/** Grade at which a casting rings true. */
+const TRUE_Q = 0.85;
+/** Milliseconds per frame the eigen-solves may use. */
+const SOLVE_BUDGET = 2.5;
+/** Padding around a casting's warp canvas, cells, and how far the strike wobble swings. */
+const PAD = 3;
+const WOBBLE = 2.2;
+/** Seconds after the first ring before the casting flies up to the shelf. */
+const FLY = 2.6;
 const SPARKS = 160;
 const CHIPS = 240;
 const PUFFS = 36;
@@ -63,8 +77,10 @@ interface Casting {
   name: string;
   w: number;
   h: number;
-  /** Local cell grid: 0 = none, 1 = metal, 2 = metal on a cold-shut seam. */
+  /** Local cell grid (the cavity's box): C_NONE, C_METAL, C_SEAM, or C_VOID where metal never got. */
   cell: Uint8Array;
+  /** Rows down to the lowest metal (what it stands on). */
+  foot: number;
   temp: Float32Array;
   lit: Float32Array;
   canvas: HTMLCanvasElement;
@@ -81,12 +97,47 @@ interface Casting {
   va: number;
   /** Target angle once shelved (bowls are cast upside down). */
   flip: number;
+  /** Grade from the modes (NaN until solved). */
   q: number;
   voids: number;
   seams: number;
   ringT: number;
   clarity: number;
   hot: boolean;
+  /** Modal analysis (undefined while solving, null if nothing solid to ring), and its pitch scale. */
+  modes?: ModalResult | null;
+  scale: number;
+  grade: Grade | null;
+  /** Per-pixel mode shapes over the padded warp canvas, and the strike's wobble per mode. */
+  fields: Float32Array[];
+  fw: number;
+  fh: number;
+  wob: Float32Array;
+  wobF: Float32Array;
+  wobTau: Float32Array;
+  warp: HTMLCanvasElement | null;
+  wg: CanvasRenderingContext2D | null;
+  wimg: ImageData | null;
+  /** Where it was last struck, local cells. */
+  hitX: number;
+  hitY: number;
+  landed: boolean;
+}
+
+/** Flawless castings of each mould (shape/thin), solved once; the scale comes from round 0. */
+const templates = new Map<string, ModalResult | null>();
+
+/** The cavity of a shape as a casting grid, every cell sound metal. */
+function shapeMask(shape: Shape) {
+  let x0 = 1e9, x1 = -1e9;
+  for (let y = 0; y <= shape.h; y++) for (let x = -40; x <= 40; x++) if (shape.inside(x, y)) {
+    x0 = Math.min(x0, x);
+    x1 = Math.max(x1, x);
+  }
+  const w = x1 - x0 + 1, h = shape.h + 1;
+  const cell = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = x0; x <= x1; x++) if (shape.inside(x, y)) cell[y * w + x - x0] = C_METAL;
+  return { cell, w, h, x0 };
 }
 
 /** Heat to colour: dark bronze -> dull red -> orange -> yellow -> white. 256 entries x rgb. */
@@ -154,7 +205,10 @@ class Foundry implements ToyInstance {
   private readonly bodyW = new Float32Array(8);
   private innerArea = area(Float32Array.from(INNER), 4);
   // Mould state
-  private stat: Assessment = { fill: 0, voids: 1, seams: 0, quality: 0, maxT: 0 };
+  private stat: Assessment = { fill: 0, voids: 1, seams: 0, maxT: 0 };
+  /** Eigen-solves in flight, stepped a few milliseconds per frame. */
+  private jobs: { key?: string; gen: Generator<void, ModalResult | null>; done: (r: ModalResult | null) => void }[] = [];
+  private solveMs = 0;
   private hits = 0;
   private swipe = new Map<number, [number, number, number]>();
   private frameGone = -1;
@@ -201,7 +255,14 @@ class Foundry implements ToyInstance {
   private tune = { rate: 1 };
   /** Smoothed milliseconds per frame in the sim and in everything else. */
   private perf = { sim: 0, draw: 0, worst: 0 };
-  private dev = { rings: [] as { mould: string; q: number; pitch: number; clarity: number }[], celebrations: 0, cycles: [] as number[], pourStart: -1 };
+  private dev = {
+    rings: [] as { mould: string; q: number; at: number[]; f: number[]; decay: number[]; amp: number[] }[],
+    grades: [] as { mould: string; q: number; ring: number; detune: number; semis: number; fill: number; seams: number }[],
+    celebrations: 0,
+    cycles: [] as number[],
+    pourStart: -1,
+    worstSolveSlice: 0,
+  };
 
   constructor(private ctx: ToyContext) {
     const g = ctx.canvas.getContext('2d', { alpha: false });
@@ -240,14 +301,18 @@ class Foundry implements ToyInstance {
         mould: this.mould.shape.name,
         level: this.level,
         fill: +this.stat.fill.toFixed(3),
-        quality: +this.stat.quality.toFixed(3),
+        rose: this.sim.rose,
+        jobs: this.jobs.length,
         seams: +this.stat.seams.toFixed(3),
         maxT: +this.stat.maxT.toFixed(3),
         poured: this.poured,
         left: Math.round(this.left),
         rate: Math.round(this.rate),
         tilt: +this.tilt.toFixed(2),
-        casting: this.casting ? { q: +this.casting.q.toFixed(3), y: +this.casting.y.toFixed(1), vy: +this.casting.vy.toFixed(1) } : null,
+        casting: this.casting ? { q: +this.casting.q.toFixed(3), y: +this.casting.y.toFixed(1), vy: +this.casting.vy.toFixed(1), solved: this.casting.modes !== undefined, screen: this.castingScreen() } : null,
+        pourX: this.mould.pourX,
+        cs: this.cs,
+        solveMs: +this.solveMs.toFixed(1),
         shelf: this.shelf.map((c) => `${c.name} ${Math.round(c.q * 100)}%`),
         simMs: +this.perf.sim.toFixed(2),
         drawMs: +this.perf.draw.toFixed(2),
@@ -283,8 +348,10 @@ class Foundry implements ToyInstance {
 
   private startMould(slideIn: boolean) {
     const shape = makeShape(SHAPES[this.level % SHAPES.length], Math.floor(this.level / SHAPES.length));
-    this.sim.kSand = 0.04 * shape.chill;
     this.mould = buildMould(this.sim, this.L, shape);
+    // Solve the flawless castings in the background while the player pours.
+    this.template(shape.id, 0);
+    this.template(shape.id, Math.floor(this.level / SHAPES.length));
     this.cap = this.mould.volume * SPARE;
     this.left = this.cap;
     // Metal starts a little below the rim, so the first bit of tilt already pours.
@@ -299,7 +366,6 @@ class Foundry implements ToyInstance {
     this.casting = null;
     this.celebrated = false;
     this.stat.fill = 0;
-    this.stat.quality = 0;
     this.stat.maxT = 0;
     this.dev.pourStart = -1;
     this.setPhase(slideIn ? 'enter' : 'pour');
@@ -367,6 +433,7 @@ class Foundry implements ToyInstance {
     }
     if ((Math.floor(t * 60) & 3) === 0 || this.phase === 'pour' || this.phase === 'cool') s.assess(this.mould.cav, this.stat);
     const t1 = performance.now();
+    this.runJobs();
     this.advance(dt);
     this.stepCasting(dt);
     this.stepParticles(dt);
@@ -378,7 +445,7 @@ class Foundry implements ToyInstance {
     this.perf.worst = Math.max(this.perf.worst, t2 - t0);
     if (this.phase === 'pour' || this.phase === 'cool' || this.phase === 'break') this.ctx.progress(Math.min(1, this.stat.fill), 'filled');
     const c = this.casting;
-    this.ctx.setStatus(`${this.mould.shape.name} · mould ${this.level + 1}${c ? ` · ${Math.round(c.q * 100)}% sound` : ` · ${Math.round(this.stat.fill * 100)}% filled`}`);
+    this.ctx.setStatus(`${this.mould.shape.name} · mould ${this.level + 1}${c ? (c.q === c.q ? ` · ${Math.round(c.q * 100)}% sound` : ' · listening…') : ` · ${Math.round(this.stat.fill * 100)}% filled`}`);
   }
 
   /** Returns whether the pour is being held. Taps drive breaking, ringing and the shelf. */
@@ -389,7 +456,7 @@ class Foundry implements ToyInstance {
       const gx = (p.x * this.width) / cs, gy = ((1 - p.y) * this.height) / cs;
       const onShelf = gy > this.L.floorY + 14;
       if (p.justDown && onShelf) {
-        this.tapShelf(gx);
+        this.tapShelf(gx, gy);
         continue;
       }
       if (onShelf) continue;
@@ -408,7 +475,11 @@ class Foundry implements ToyInstance {
             this.hit(gx, gy, 0.8);
           }
         }
-      } else if (p.justDown && this.phase === 'ring' && this.casting) this.ring(this.casting, 1);
+      } else if (p.justDown && (this.phase === 'ring' || (this.phase === 'shelve' && this.phaseT < FLY - 0.1)) && this.casting) {
+        const c = this.casting;
+        const [lx, ly] = this.toLocal(c, gx, gy, c.x + c.w / 2, c.y + c.h / 2, 1);
+        this.ring(c, 1, lx, ly, (gx / this.cols - 0.5) * 0.6);
+      }
       else if (p.justDown && this.phase === 'cool') this.setHint('Let it set…');
     }
     if (!this.ctx.pointers.active.size) this.swipe.clear();
@@ -425,7 +496,7 @@ class Foundry implements ToyInstance {
     else this.sinceHold += dt;
     const lift = this.phase === 'enter' || this.phase === 'pour' ? 0 : 70;
     this.crucLift += (lift - this.crucLift) * Math.min(1, dt * (lift ? 1.8 : 3.2));
-    const lx = this.L.cx + 0.5, ly = this.L.lipY - this.crucLift;
+    const lx = this.mould.pourX + 0.5, ly = this.L.lipY - this.crucLift;
     place(INNER, this.tilt, lx, ly, this.innerW);
     place(BODY, this.tilt, lx, ly, this.bodyW);
     // Whatever no longer fits below the lip line spills over it.
@@ -446,7 +517,7 @@ class Foundry implements ToyInstance {
     if (n < 1) return;
     this.pourAcc -= n;
     const w = this.rate > 240 ? 3 : this.rate > 110 ? 2 : 1;
-    const placed = s.pour(this.L.cx - (w >> 1), this.L.lipY + 1, w, n);
+    const placed = s.pour(this.mould.pourX - (w >> 1), this.L.lipY + 1, w, n);
     this.left -= placed;
     this.poured += placed;
     if (this.dev.pourStart < 0) this.dev.pourStart = this.time;
@@ -558,27 +629,27 @@ class Foundry implements ToyInstance {
     // The casting is everything in the cavity; the gate and any overflow snap off as scrap.
     const { cells, W } = s;
     s.assess(this.mould.cav, this.stat);
-    let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
-    for (const k of this.mould.cav) {
-      if (cells[k] !== METAL) continue;
-      const x = k % W, y = (k / W) | 0;
-      x0 = Math.min(x0, x);
-      x1 = Math.max(x1, x);
-      y0 = Math.min(y0, y);
-      y1 = Math.max(y1, y);
-    }
-    if (x1 >= 0) {
-      const w = x1 - x0 + 1, h = y1 - y0 + 1;
-      const c = makeCasting(this.mould.shape.id, this.mould.shape.name, w, h, x0, y0, this.stat);
+    // The casting's grid is the cavity's box, aligned with the flawless template's mesh.
+    const shape = this.mould.shape, box = shapeMask(shape);
+    const x0 = this.mould.cavX + box.x0, y0 = this.mould.cavTop, w = box.w, h = box.h;
+    let metal = 0;
+    for (const k of this.mould.cav) if (cells[k] === METAL) metal++;
+    if (metal > 0) {
+      const c = makeCasting(shape.id, shape.name, w, h, x0, y0, this.stat);
       for (const k of this.mould.cav) {
-        if (cells[k] !== METAL) continue;
         const i = ((k / W) | 0) - y0, j = (k % W) - x0;
-        c.cell[i * w + j] = s.isShut(k) ? 2 : 1;
+        if (cells[k] !== METAL) {
+          c.cell[i * w + j] = C_VOID;
+          continue;
+        }
+        c.cell[i * w + j] = s.isShut(k) ? C_SEAM : C_METAL;
         c.temp[i * w + j] = s.temp[k];
+        c.foot = Math.max(c.foot, i + 1);
         cells[k] = 0;
       }
       shadeCasting(c);
       this.casting = c;
+      this.solveCasting(c, shape, Math.floor(this.level / SHAPES.length));
     }
     for (let k = 0; k < cells.length; k++) if (cells[k] === METAL) cells[k] = METAL | LOOSE;
     this.setPhase('drop');
@@ -595,7 +666,7 @@ class Foundry implements ToyInstance {
         if (this.dropDelay <= 0) {
           c.vy += 260 * dt;
           c.y += c.vy * dt;
-          const floor = this.L.floorY - c.h;
+          const floor = this.L.floorY - c.foot;
           if (c.y >= floor) {
             c.y = floor;
             const hard = c.vy > 30;
@@ -610,14 +681,18 @@ class Foundry implements ToyInstance {
             c.vy = -c.vy * 0.28;
             if (!hard) {
               c.vy = 0;
-              this.setPhase('ring');
-              this.setHint('Tap to ring it');
+              c.landed = true;
             }
           }
         }
+        // Ready to ring once it has settled and its modes are in.
+        if (c.landed && c.modes !== undefined) {
+          this.setPhase('ring');
+          this.setHint('Tap it anywhere to ring it');
+        }
       }
       // Wobble settles flat (or towards upright on the way to the shelf).
-      c.va += (-(c.a - (this.phase === 'shelve' && this.phaseT > 1.2 ? c.flip : 0)) * 70 - c.va * 7) * dt;
+      c.va += (-(c.a - (this.phase === 'shelve' && this.phaseT > FLY ? c.flip : 0)) * 70 - c.va * 7) * dt;
       c.a += c.va * dt;
       if (c.ringT >= 0) c.ringT += dt;
       this.coolCasting(c, dt);
@@ -640,32 +715,57 @@ class Foundry implements ToyInstance {
 
   // ---------------------------------------------------------------- ring
 
-  /** Strike a casting. Pitch and clarity both come from how sound it is. */
-  private ring(c: Casting, gain: number) {
-    const q = c.q;
-    const clarity = smooth(0.5, 0.97, q);
-    const base = shapePitch(c.shape) * (0.8 + 0.2 * q);
-    c.ringT = 0;
-    c.clarity = clarity;
+  /**
+   * Strike a casting at a point (local cells). The note is the casting's own modes, each as loud as
+   * the mode shape moves at the strike point along the blow, so every spot sounds a bit different.
+   */
+  private ring(c: Casting, gain: number, lx: number, ly: number, pan: number) {
+    const m = c.modes;
     const snd = this.ctx.sound;
-    snd.play('knock', { pitch: 0.7 + 0.5 * clarity, gain: gain * (0.35 + 0.5 * (1 - clarity)) });
-    snd.play('chime', { pitch: base, gain: gain * (0.12 + 0.88 * clarity ** 1.5) });
-    if (clarity < 0.85) {
-      // Voids and laps: a dead thud and a sour, beating partial instead of a clean tone.
-      snd.play('thud', { pitch: 0.9 + (1 - clarity) * 0.5, gain: gain * (1 - clarity) });
-      this.later(0.035, () => snd.play('chime', { pitch: base * (1.06 + 0.12 * (1 - clarity)), gain: gain * 0.45 * (1 - clarity) }));
-    } else {
-      // A sound casting sings: an octave partial and a long bloom.
-      this.later(0.04, () => snd.play('chime', { pitch: base * 2.005, gain: gain * 0.4 * clarity }));
-      this.later(0.45, () => snd.play('chime', { pitch: base, gain: gain * 0.55 * clarity }));
-      this.later(0.95, () => snd.play('chime', { pitch: base, gain: gain * 0.3 * clarity }));
-    }
+    c.ringT = 0;
     this.ctx.haptic('light');
-    if (import.meta.env.DEV) this.dev.rings.push({ mould: c.name, q: +q.toFixed(3), pitch: +base.toFixed(3), clarity: +clarity.toFixed(3) });
-    if (c !== this.casting) return;
+    if (!m) {
+      // Nothing whole enough to ring: a dead clunk.
+      snd.play('knock', { pitch: 0.6, gain: gain * 0.8 });
+      snd.play('thud', { pitch: 1.1, gain: gain * 0.6 });
+      c.clarity = 0;
+    } else {
+      const n = nearestNode(m, lx, ly);
+      const [dx, dy] = this.inward(c, lx, ly);
+      const parts = strikePartials(m, n, dx, dy, c.scale);
+      // A damped casting sheds its energy fast; lift it a little so a dull clunk still carries.
+      snd.modes(parts, { gain: Math.min(1, gain * (0.8 + 0.4 * (1 - (c.q === c.q ? c.q : 1)))), pan, strike: 0.55 });
+      // The same modes, slowed to a visible wobble.
+      let tot = 0, top = 0;
+      for (const p of parts) {
+        tot += p.amp;
+        top = Math.max(top, p.amp);
+      }
+      for (let k = 0; k < parts.length; k++) {
+        c.wob[k] = parts[k].amp / (top || 1);
+        c.wobF[k] = 5 * Math.sqrt(parts[k].freq / parts[0].freq);
+        c.wobTau[k] = Math.min(1.1, 0.12 + parts[k].decay * 0.25);
+      }
+      c.hitX = lx;
+      c.hitY = ly;
+      c.clarity = c.q;
+      if (import.meta.env.DEV)
+        this.dev.rings.push({
+          mould: c.name, q: +c.q.toFixed(3), at: [Math.round(lx), Math.round(ly)],
+          f: parts.map((p) => Math.round(p.freq)), decay: parts.map((p) => +p.decay.toFixed(2)), amp: parts.map((p) => +(p.amp / (tot || 1)).toFixed(3)),
+        });
+    }
+    if (c !== this.casting || this.phase !== 'ring') return;
+    const q = c.q, gr = c.grade;
     const pct = Math.round(q * 100);
-    const why = c.voids > c.seams * 8 ? 'gaps' : 'cold shuts';
-    const verdict = q >= TRUE_Q ? 'Rang true!' : q >= 0.7 ? `A bit flat — ${why}` : q >= 0.4 ? `Dull — ${why}` : 'Clunk. Misrun';
+    const where = gr && gr.flawY === gr.flawY ? makeShape(c.shape, 0).part(gr.flawY) : this.voidPart(c);
+    let verdict = 'Rang true!';
+    if (q < TRUE_Q) {
+      if (!gr) verdict = 'Clunk. Misrun';
+      else if (c.seams > 0.002 && gr.ring < 0.8) verdict = `Cold shut at the ${where}: a short ring`;
+      else if (c.voids > 0.01) verdict = `Short of metal at the ${where}: rings ${gr.semis < 0 ? 'flat' : 'sharp'}`;
+      else verdict = 'Rang a little sour';
+    }
     this.showToast(`${verdict} ${pct}%`, q >= TRUE_Q);
     if (q >= TRUE_Q && !this.celebrated) {
       this.celebrated = true;
@@ -674,15 +774,113 @@ class Foundry implements ToyInstance {
         this.ctx.celebrate('Rang true!');
       });
     }
-    if (this.phase === 'ring') {
-      this.setPhase('shelve');
-      this.setHint('');
-      if (this.dev.pourStart >= 0) this.dev.cycles.push(+(this.time - this.dev.pourStart).toFixed(1));
-      this.later(1.9, () => {
-        if (this.casting === c) this.shelve(c);
-        this.nextMould(false);
-      });
+    this.setPhase('shelve');
+    this.setHint('Tap again to hear another spot');
+    if (this.dev.pourStart >= 0) this.dev.cycles.push(+(this.time - this.dev.pourStart).toFixed(1));
+    this.later(FLY + 0.7, () => {
+      if (this.casting === c) this.shelve(c);
+      this.nextMould(false);
+    });
+  }
+
+  /** Direction a blow at a point pushes the metal: into the casting, away from the open side. */
+  private inward(c: Casting, lx: number, ly: number): [number, number] {
+    let sx = 0, sy = 0;
+    const i0 = Math.round(ly - 0.5), j0 = Math.round(lx - 0.5);
+    for (let i = i0 - 3; i <= i0 + 3; i++)
+      for (let j = j0 - 3; j <= j0 + 3; j++) {
+        if (i < 0 || j < 0 || i >= c.h || j >= c.w) continue;
+        const v = c.cell[i * c.w + j];
+        if (v !== C_METAL && v !== C_SEAM) continue;
+        sx += j + 0.5 - lx;
+        sy += i + 0.5 - ly;
+      }
+    return Math.hypot(sx, sy) > 0.5 ? [sx, sy] : [1, 0.3];
+  }
+
+  /** Which part of the casting the metal never reached. */
+  private voidPart(c: Casting) {
+    let y = 0, n = 0;
+    for (let k = 0; k < c.cell.length; k++)
+      if (c.cell[k] === C_VOID) {
+        y += (k / c.w) | 0;
+        n++;
+      }
+    return makeShape(c.shape, 0).part(n ? y / n : c.h / 2);
+  }
+
+  /** Solve the flawless casting of a mould once, in the background. */
+  private template(id: ShapeId, thin: number) {
+    const key = `${id}/${thin}`;
+    if (templates.has(key) || this.jobs.some((j) => j.key === key)) return;
+    const box = shapeMask(makeShape(id, thin));
+    const job = { key, gen: solveModes(box.cell, box.w, box.h), done: (r: ModalResult | null) => templates.set(key, r) };
+    this.jobs.push(job);
+  }
+
+  /** Queue the casting's own solve behind its templates; grade it against them when done. */
+  private solveCasting(c: Casting, shape: Shape, thin: number) {
+    const tplKey = `${shape.id}/${thin}`;
+    this.template(shape.id, 0);
+    this.template(shape.id, thin);
+    this.jobs.push({
+      gen: solveModes(c.cell, c.w, c.h),
+      done: (r) => {
+        const base = templates.get(`${shape.id}/0`), tpl = templates.get(tplKey);
+        c.scale = base ? shape.f1 / Math.sqrt(base.lambda[0]) : 1;
+        c.modes = r;
+        if (r && tpl) {
+          c.grade = grade(r, tpl, c.scale);
+          c.q = c.grade.q;
+          const f = modeFields(r, c.cell, PAD);
+          c.fields = f.fields;
+          c.fw = f.W;
+          c.fh = f.H;
+          c.warp = document.createElement('canvas');
+          c.warp.width = f.W;
+          c.warp.height = f.H;
+          c.wg = c.warp.getContext('2d')!;
+          c.wimg = c.wg.createImageData(f.W, f.H);
+          if (import.meta.env.DEV)
+            this.dev.grades.push({
+              mould: c.name, q: +c.q.toFixed(3), ring: +c.grade.ring.toFixed(3), detune: +c.grade.detune.toFixed(4), semis: +c.grade.semis.toFixed(2), fill: +(1 - c.voids).toFixed(3), seams: +c.seams.toFixed(3),
+            });
+        } else c.q = 0;
+      },
+    });
+  }
+
+  /** Step queued solves within the frame budget; a job that must finish now can be forced. */
+  private runJobs(force = false) {
+    const t0 = performance.now();
+    while (this.jobs.length) {
+      const job = this.jobs[0];
+      const s0 = performance.now();
+      const r = job.gen.next();
+      const slice = performance.now() - s0;
+      if (import.meta.env.DEV) this.dev.worstSolveSlice = Math.max(this.dev.worstSolveSlice, slice);
+      if (r.done) {
+        this.jobs.shift();
+        job.done(r.value);
+      }
+      if (!force && performance.now() - t0 > SOLVE_BUDGET) break;
     }
+    this.solveMs += (performance.now() - t0 - this.solveMs) * 0.1;
+  }
+
+  /** The current casting's centre on screen in CSS pixels (for tests). */
+  private castingScreen() {
+    const c = this.casting;
+    if (!c) return null;
+    const pr = this.ctx.pixelRatio;
+    return { x: ((c.x + c.w / 2) * this.cs) / pr, y: ((c.y + c.h / 2) * this.cs) / pr, w: (c.w * this.cs) / pr, h: (c.h * this.cs) / pr };
+  }
+
+  /** A point in grid cells to a casting's local cells, given where and how it is drawn. */
+  private toLocal(c: Casting, gx: number, gy: number, cx: number, cy: number, scale: number): [number, number] {
+    const dx = (gx - cx) / scale, dy = (gy - cy) / scale;
+    const cos = Math.cos(c.a), sin = Math.sin(c.a);
+    return [dx * cos + dy * sin + c.w / 2, -dx * sin + dy * cos + c.h / 2];
   }
 
   private shelve(c: Casting) {
@@ -694,10 +892,13 @@ class Foundry implements ToyInstance {
     this.ctx.sound.play('knock', { pitch: 1.3, gain: 0.4 });
   }
 
-  private tapShelf(gx: number) {
+  private tapShelf(gx: number, gy: number) {
     const i = Math.floor(((gx - this.shelfX0()) / this.shelfW()) * SHELF_SLOTS);
     const c = this.shelf[i];
-    if (c) this.ring(c, 0.8);
+    if (!c) return;
+    const s = this.slotScale(c) / this.cs, px = this.slotX(i) / this.cs;
+    const [lx, ly] = this.toLocal(c, gx, gy, px, this.L.shelfY - (c.h * s) / 2, s);
+    this.ring(c, 0.8, lx, ly, (px / this.cols - 0.5) * 0.6);
   }
 
   private shelfW() {
@@ -736,7 +937,7 @@ class Foundry implements ToyInstance {
         this.sp = (this.sp + 1) % SPARKS;
         const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.2;
         const v = 25 + Math.random() * 55;
-        sparks[o] = this.L.cx + 0.5 + (Math.random() - 0.5) * 3;
+        sparks[o] = this.mould.pourX + 0.5 + (Math.random() - 0.5) * 3;
         sparks[o + 1] = this.L.flaskTop - 0.5;
         sparks[o + 2] = Math.cos(a) * v;
         sparks[o + 3] = Math.sin(a) * v;
@@ -747,7 +948,8 @@ class Foundry implements ToyInstance {
     if ((this.phase === 'pour' || this.phase === 'cool') && this.poured > 0 && Math.random() < dt * (4 + this.stat.maxT * 10)) {
       const o = this.pp * 5;
       this.pp = (this.pp + 1) % PUFFS;
-      puffs[o] = this.L.cx + (Math.random() - 0.5) * 14;
+      // From the basin and the riser, where the metal meets the air.
+      puffs[o] = (Math.random() < 0.5 ? this.mould.pourX : this.mould.cavX + this.mould.shape.riser) + (Math.random() - 0.5) * 8;
       puffs[o + 1] = this.L.flaskTop - 1;
       puffs[o + 2] = (Math.random() - 0.5) * 4;
       puffs[o + 3] = 0;
@@ -822,11 +1024,11 @@ class Foundry implements ToyInstance {
     g.globalCompositeOperation = 'lighter';
     g.globalAlpha = 0.16 + 0.1 * cr + 0.12 * (this.rate / MAX_RATE);
     const lr = 70 * cs;
-    g.drawImage(this.light, (this.L.cx - 8) * cs - lr, (this.L.lipY - this.crucLift + 4) * cs - lr, lr * 2, lr * 2);
+    g.drawImage(this.light, (this.mould.pourX - 8) * cs - lr, (this.L.lipY - this.crucLift + 4) * cs - lr, lr * 2, lr * 2);
     if (heat > 0.02) {
       g.globalAlpha = 0.35 * heat;
       const mr = 80 * cs;
-      g.drawImage(this.light, this.L.cx * cs + ox - mr, (this.L.flaskTop + 40) * cs - mr, mr * 2, mr * 2);
+      g.drawImage(this.light, this.mould.cavX * cs + ox - mr, (this.L.flaskTop + 60) * cs - mr, mr * 2, mr * 2);
     }
     g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';
@@ -842,8 +1044,8 @@ class Foundry implements ToyInstance {
     if (c) {
       let px = (c.x + c.w / 2) * cs, py = (c.y + c.h / 2) * cs, s = cs;
       // Fly up onto the shelf.
-      if (this.phase === 'shelve' && this.phaseT > 1.2) {
-        const k = smooth(1.2, 1.9, this.phaseT);
+      if (this.phase === 'shelve' && this.phaseT > FLY) {
+        const k = smooth(FLY, FLY + 0.7, this.phaseT);
         const i = Math.min(this.shelf.length, SHELF_SLOTS - 1);
         const ts = this.slotScale(c);
         px += (this.slotX(i) - px) * k;
@@ -905,13 +1107,9 @@ class Foundry implements ToyInstance {
         } else if (m === METAL) {
           const ti = Math.min(255, (temp[k] * 255) | 0);
           let f = 0.93 + (shade[k] & 31) / 250;
-          if (flag[k] & 1) f *= 0.62;
           if (ti < 110 && cells[k - W] !== METAL) f *= 1.22;
           const i3 = ti * 3;
-          d[o] = Math.min(255, METAL_RGB[i3] * f);
-          d[o + 1] = Math.min(255, METAL_RGB[i3 + 1] * f);
-          d[o + 2] = Math.min(255, METAL_RGB[i3 + 2] * f);
-          d[o + 3] = 255;
+          seamTint(METAL_RGB[i3] * f, METAL_RGB[i3 + 1] * f, METAL_RGB[i3 + 2] * f, (flag[k] & 1) !== 0, d, o);
           if (ti > 80) {
             const s = flag[k] & 1 ? 0.4 : 1;
             e[o] = GLOW_RGB[i3] * s;
@@ -981,7 +1179,7 @@ class Foundry implements ToyInstance {
   private drawCrucible() {
     if (this.crucLift > 68) return;
     const { g, cs } = this;
-    const lx = (this.L.cx + 0.5) * cs, ly = (this.L.lipY - this.crucLift) * cs;
+    const lx = (this.mould.pourX + 0.5) * cs, ly = (this.L.lipY - this.crucLift) * cs;
     // Hoist chain and bail.
     g.strokeStyle = '#3a3230';
     g.lineWidth = cs * 0.9;
@@ -1077,12 +1275,22 @@ class Foundry implements ToyInstance {
 
   private drawCasting(c: Casting, cxp: number, cyp: number, scale: number, g: CanvasRenderingContext2D) {
     const ring = c.ringT >= 0 ? Math.exp(-c.ringT / (0.25 + 1.4 * c.clarity)) : 0;
-    const buzz = ring * Math.sin(c.ringT * 90) * scale * 0.5;
+    const warped = this.warpCasting(c);
     g.save();
-    g.translate(cxp + buzz, cyp);
+    g.translate(cxp, cyp);
     g.rotate(c.a);
     g.imageSmoothingEnabled = false;
-    g.drawImage(c.canvas, (-c.w / 2) * scale, (-c.h / 2) * scale, c.w * scale, c.h * scale);
+    if (warped && c.warp) g.drawImage(c.warp, (-c.w / 2 - PAD) * scale, (-c.h / 2 - PAD) * scale, c.fw * scale, c.fh * scale);
+    else g.drawImage(c.canvas, (-c.w / 2) * scale, (-c.h / 2) * scale, c.w * scale, c.h * scale);
+    // A spark of light where it was struck.
+    if (ring > 0.05 && c.ringT < 0.25) {
+      g.globalCompositeOperation = 'lighter';
+      g.fillStyle = `rgba(255,236,190,${(1 - c.ringT / 0.25) * 0.8})`;
+      g.beginPath();
+      g.arc((c.hitX - c.w / 2) * scale, (c.hitY - c.h / 2) * scale, scale * (1.2 + c.ringT * 8), 0, Math.PI * 2);
+      g.fill();
+      g.globalCompositeOperation = 'source-over';
+    }
     g.restore();
     if (c.hot && c === this.casting) {
       const a = this.ga;
@@ -1107,6 +1315,50 @@ class Foundry implements ToyInstance {
     }
   }
 
+  /**
+   * While it rings, bend the casting by its own mode shapes (slowed and exaggerated): every pixel
+   * of the padded warp canvas samples the casting back through the summed displacement field.
+   * Returns false once the wobble has died away.
+   */
+  private warpCasting(c: Casting) {
+    if (!c.wimg || !c.fields.length || c.ringT < 0 || c.ringT > 2.5) return false;
+    const t = c.ringT, K = c.fields.length;
+    const coef = this.coef;
+    let live = 0;
+    for (let k = 0; k < K; k++) {
+      coef[k] = WOBBLE * c.wob[k] * Math.exp(-t / c.wobTau[k]) * Math.sin(2 * Math.PI * c.wobF[k] * t) * Math.min(1, t * 30);
+      live += Math.abs(coef[k]);
+    }
+    if (live < 0.03 && t > 0.1) return false;
+    const { fw, fh, w, h } = c;
+    const src = c.img.data, dst = c.wimg.data;
+    for (let y = 0; y < fh; y++)
+      for (let x = 0; x < fw; x++) {
+        const p = y * fw + x;
+        let ux = 0, uy = 0;
+        for (let k = 0; k < K; k++) {
+          const f = c.fields[k];
+          ux += coef[k] * f[p * 2];
+          uy += coef[k] * f[p * 2 + 1];
+        }
+        const sx = Math.round(x - PAD - ux), sy = Math.round(y - PAD - uy);
+        const o = p * 4;
+        if (sx < 0 || sy < 0 || sx >= w || sy >= h) {
+          dst[o + 3] = 0;
+          continue;
+        }
+        const q = (sy * w + sx) * 4;
+        dst[o] = src[q];
+        dst[o + 1] = src[q + 1];
+        dst[o + 2] = src[q + 2];
+        dst[o + 3] = src[q + 3];
+      }
+    c.wg!.putImageData(c.wimg, 0, 0);
+    return true;
+  }
+
+  private coef = new Float32Array(12);
+
   private drawShelf() {
     const { g, cs } = this;
     const y = this.L.shelfY * cs;
@@ -1118,7 +1370,7 @@ class Foundry implements ToyInstance {
       const s = this.slotScale(c), px = this.slotX(i);
       this.drawCasting(c, px, y - (c.h * s) / 2, s, g);
       g.fillStyle = c.q >= TRUE_Q ? '#ffd9a0' : 'rgba(255,230,210,0.5)';
-      g.fillText(`${Math.round(c.q * 100)}%`, px, y + cs * 2.2);
+      if (c.q === c.q) g.fillText(`${Math.round(c.q * 100)}%`, px, y + cs * 2.2);
     }
   }
 
@@ -1198,12 +1450,12 @@ class Foundry implements ToyInstance {
     const { g, cs, time } = this;
     let x = 0, y = 0, show = false;
     if (this.phase === 'pour' && this.rate === 0 && this.stat.fill < 0.9) {
-      x = (this.L.cx - 9) * cs;
+      x = (this.mould.pourX - 9) * cs;
       y = (this.L.lipY + 9) * cs;
       show = true;
     } else if (this.phase === 'break' && this.phaseT > 0.3) {
       x = this.L.cx * cs;
-      y = (this.L.flaskTop + 45) * cs;
+      y = (this.L.flaskTop + 55) * cs;
       show = true;
     } else if (this.phase === 'ring' && this.casting && this.phaseT > 0.4) {
       x = (this.casting.x + this.casting.w / 2) * cs;
@@ -1299,10 +1551,6 @@ function smooth(a: number, b: number, x: number) {
   return t * t * (3 - 2 * t);
 }
 
-function shapePitch(id: ShapeId) {
-  return makeShape(id, 0).pitch;
-}
-
 function radial(size: number, rgb: number[]) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -1357,45 +1605,62 @@ function makeCasting(shape: ShapeId, name: string, w: number, h: number, x: numb
     canvas, cg, img: cg.createImageData(w, h),
     glow, gg, gimg: gg.createImageData(w, h),
     x, y, vy: 0, a: 0, va: 0,
-    flip: shape === 'bowl' ? Math.PI : 0,
-    q: a.quality, voids: a.voids, seams: a.seams,
+    flip: 0,
+    q: NaN, voids: a.voids, seams: a.seams,
     ringT: -1, clarity: 0, hot: true,
+    foot: 0, scale: 1, grade: null,
+    fields: [], fw: 0, fh: 0,
+    wob: new Float32Array(12), wobF: new Float32Array(12), wobTau: new Float32Array(12),
+    warp: null, wg: null, wimg: null,
+    hitX: w / 2, hitY: h / 2, landed: false,
   };
 }
 
 /** Fixed per-cell lighting for a casting: a bright top-left rim, shadowed underside, seams dark. */
 function shadeCasting(c: Casting) {
   const { w, h, cell, lit } = c;
+  const solid = (k: number) => cell[k] === C_METAL || cell[k] === C_SEAM;
   for (let i = 0; i < h; i++)
     for (let j = 0; j < w; j++) {
       const k = i * w + j;
-      if (!cell[k]) continue;
+      if (!solid(k)) continue;
       // Soft top light plus a diagonal sheen across the metal.
       const u = j / w - (i / h) * 0.6 - 0.15;
       let f = 0.88 + Math.random() * 0.08 + 0.16 * (1 - i / h) + 0.3 * Math.exp(-u * u * 90);
-      if (i === 0 || !cell[k - w]) f *= 1.3;
-      else if (j === 0 || !cell[k - 1]) f *= 1.15;
-      if (i === h - 1 || !cell[k + w]) f *= 0.7;
-      if (cell[k] === 2) f *= 0.55;
+      if (i === 0 || !solid(k - w)) f *= 1.3;
+      else if (j === 0 || !solid(k - 1)) f *= 1.15;
+      if (i === h - 1 || !solid(k + w)) f *= 0.7;
       lit[k] = f;
     }
   paintCasting(c);
+}
+
+/** Write a metal pixel; cold-shut cells show as a dark grey oxide line where the fronts never fused. */
+function seamTint(r: number, g: number, b: number, seam: boolean, d: Uint8ClampedArray, o: number) {
+  if (seam) {
+    const l = (r + g + b) / 3;
+    r = 26 + l * 0.22;
+    g = 28 + l * 0.22;
+    b = 34 + l * 0.26;
+  }
+  d[o] = Math.min(255, r);
+  d[o + 1] = Math.min(255, g);
+  d[o + 2] = Math.min(255, b);
+  d[o + 3] = 255;
 }
 
 function paintCasting(c: Casting) {
   const d = c.img.data, e = c.gimg.data;
   for (let k = 0; k < c.cell.length; k++) {
     const o = k * 4;
-    if (!c.cell[k]) {
+    const v = c.cell[k];
+    if (v !== C_METAL && v !== C_SEAM) {
       d[o + 3] = 0;
       e[o + 3] = 0;
       continue;
     }
     const ti = Math.min(255, (c.temp[k] * 255) | 0), i3 = ti * 3, f = c.lit[k];
-    d[o] = Math.min(255, METAL_RGB[i3] * f);
-    d[o + 1] = Math.min(255, METAL_RGB[i3 + 1] * f);
-    d[o + 2] = Math.min(255, METAL_RGB[i3 + 2] * f);
-    d[o + 3] = 255;
+    seamTint(METAL_RGB[i3] * f, METAL_RGB[i3 + 1] * f, METAL_RGB[i3 + 2] * f, v === C_SEAM, d, o);
     e[o] = GLOW_RGB[i3];
     e[o + 1] = GLOW_RGB[i3 + 1];
     e[o + 2] = GLOW_RGB[i3 + 2];
