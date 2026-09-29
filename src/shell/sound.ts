@@ -4,20 +4,20 @@
 // level and brightness a toy drives every frame (pouring sand, running water, a fire's roar).
 
 export type Voice =
-  | "pop" // bright bubble pop: merges, bursts
-  | "plop" // rising bloop: drops, drips into liquid
-  | "squish" // wet squelch: squeezing goo and jelly
-  | "boing" // jelly wobble
-  | "thud" // soft heavy landing
-  | "knock" // hard wood/plastic hit: blocks, marbles
-  | "tick" // tiny click: UI, grains, a spool clicking in
-  | "snap" // sharp crack: threads snapping, branches
-  | "rip" // tearing fabric
-  | "splash" // liquid splash
-  | "whoosh" // air: throws, sweeps
-  | "crumble" // soil and sand collapsing
-  | "sizzle" // hot hiss
-  | "chime"; // reward sparkle
+  | 'pop' // bright bubble pop: merges, bursts
+  | 'plop' // rising bloop: drops, drips into liquid
+  | 'squish' // wet squelch: squeezing goo and jelly
+  | 'boing' // jelly wobble
+  | 'thud' // soft heavy landing
+  | 'knock' // hard wood/plastic hit: blocks, marbles
+  | 'tick' // tiny click: UI, grains, a spool clicking in
+  | 'snap' // sharp crack: threads snapping, branches
+  | 'rip' // tearing fabric
+  | 'splash' // liquid splash
+  | 'whoosh' // air: throws, sweeps
+  | 'crumble' // soil and sand collapsing
+  | 'sizzle' // hot hiss
+  | 'chime'; // reward sparkle
 
 export interface PlayOpts {
   /** Pitch as a ratio (1 = default, 2 = an octave up). */
@@ -28,7 +28,7 @@ export interface PlayOpts {
   pan?: number;
 }
 
-export type LoopKind = "hiss" | "rumble" | "trickle" | "crackle" | "bubble";
+export type LoopKind = 'hiss' | 'rumble' | 'trickle' | 'crackle' | 'bubble';
 
 export interface Loop {
   /** Level 0..1 and brightness 0..1; smoothed, so call it every frame. */
@@ -51,7 +51,7 @@ const MIN_GAP: Partial<Record<Voice, number>> = {
   squish: 0.06,
   boing: 0.08,
 };
-const KEY = "bobo.sound";
+const KEY = 'bobo.sound';
 /** Per-voice trim so every voice peaks at roughly the same level (measured offline). */
 const LEVEL: Record<Voice, number> = {
   pop: 1.7,
@@ -83,7 +83,7 @@ const listeners = new Set<(on: boolean) => void>();
 
 function readPref() {
   try {
-    return localStorage.getItem(KEY) !== "off";
+    return localStorage.getItem(KEY) !== 'off';
   } catch {
     return true;
   }
@@ -96,12 +96,11 @@ export function soundEnabled() {
 export function setSoundEnabled(on: boolean) {
   enabled = on;
   try {
-    localStorage.setItem(KEY, on ? "on" : "off");
+    localStorage.setItem(KEY, on ? 'on' : 'off');
   } catch {
     /* private mode */
   }
-  if (master && ctx)
-    master.gain.setTargetAtTime(on ? 0.8 : 0, ctx.currentTime, 0.02);
+  if (master && ctx) master.gain.setTargetAtTime(on ? 0.8 : 0, ctx.currentTime, 0.02);
   listeners.forEach((f) => f(on));
 }
 
@@ -113,17 +112,14 @@ export function onSoundChange(f: (on: boolean) => void) {
 /** Browsers only start audio from a user gesture; call from the first pointerdown. */
 export function unlockSound() {
   const c = audio();
-  if (c && c.state !== "running") c.resume().catch(() => {});
+  if (c && c.state !== 'running') c.resume().catch(() => {});
 }
 
 function audio(): AudioContext | null {
   if (ctx) return ctx;
-  const AC =
-    window.AudioContext ??
-    (window as unknown as { webkitAudioContext?: typeof AudioContext })
-      .webkitAudioContext;
+  const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!AC) return null;
-  ctx = new AC({ latencyHint: "interactive" });
+  ctx = new AC({ latencyHint: 'interactive' });
   // A gentle compressor on the master keeps big chain reactions from clipping.
   const comp = ctx.createDynamicsCompressor();
   comp.threshold.value = -14;
@@ -137,15 +133,7 @@ function audio(): AudioContext | null {
   const sr = ctx.sampleRate;
   noise = makeBuffer(ctx, 2 * sr, () => Math.random() * 2 - 1);
   // Sparse impulse trains: crackling fire, trickling grains, bubbling liquid.
-  crackle = makeBuffer(
-    ctx,
-    2 * sr,
-    () =>
-      (Math.random() < 30 / sr
-        ? (Math.random() * 2 - 1) * (0.5 + Math.random())
-        : 0) +
-      (Math.random() * 2 - 1) * 0.02,
-  );
+  crackle = makeBuffer(ctx, 2 * sr, () => (Math.random() < 30 / sr ? (Math.random() * 2 - 1) * (0.5 + Math.random()) : 0) + (Math.random() * 2 - 1) * 0.02);
   trickle = makeGrains(ctx, 2 * sr, 260, 0.0015);
   bubble = makeBubbles(ctx, 2 * sr);
   return ctx;
@@ -159,12 +147,7 @@ function makeBuffer(c: AudioContext, n: number, f: (i: number) => number) {
 }
 
 /** Many tiny decaying noise grains at random times: sand pouring, gravel. */
-function makeGrains(
-  c: AudioContext,
-  n: number,
-  perSecond: number,
-  len: number,
-) {
+function makeGrains(c: AudioContext, n: number, perSecond: number, len: number) {
   const b = c.createBuffer(1, n, c.sampleRate);
   const d = b.getChannelData(0);
   const sr = c.sampleRate;
@@ -173,8 +156,7 @@ function makeGrains(
   for (let g = 0; g < count; g++) {
     const at = Math.floor(Math.random() * (n - L));
     const amp = 0.2 + Math.random() * 0.8;
-    for (let k = 0; k < L; k++)
-      d[at + k] += (Math.random() * 2 - 1) * amp * Math.exp((-6 * k) / L);
+    for (let k = 0; k < L; k++) d[at + k] += (Math.random() * 2 - 1) * amp * Math.exp((-6 * k) / L);
   }
   return b;
 }
@@ -202,7 +184,7 @@ export const sound: Sound = {
   play(voice, opts = {}) {
     if (!enabled) return;
     const c = audio();
-    if (!c || !master || c.state !== "running" || active >= MAX_VOICES) return;
+    if (!c || !master || c.state !== 'running' || active >= MAX_VOICES) return;
     const now = c.currentTime;
     const gap = MIN_GAP[voice] ?? 0.03;
     if (now - (lastPlay.get(voice) ?? -1) < gap) return;
@@ -234,14 +216,7 @@ export const sound: Sound = {
     const c = audio();
     if (!c || !master) return { set() {}, stop() {} };
     const src = c.createBufferSource();
-    src.buffer =
-      kind === "crackle"
-        ? crackle
-        : kind === "trickle"
-          ? trickle
-          : kind === "bubble"
-            ? bubble
-            : noise;
+    src.buffer = kind === 'crackle' ? crackle : kind === 'trickle' ? trickle : kind === 'bubble' ? bubble : noise;
     src.loop = true;
     // Start somewhere random so two loops of the same kind don't phase.
     const filter = c.createBiquadFilter();
@@ -258,17 +233,8 @@ export const sound: Sound = {
       set(level, brightness = 0.5) {
         if (stopped || !ctx) return;
         const t = ctx.currentTime;
-        g.gain.setTargetAtTime(
-          Math.max(0, Math.min(1, level)) * cfg.gain,
-          t,
-          0.06,
-        );
-        filter.frequency.setTargetAtTime(
-          cfg.lo *
-            Math.pow(cfg.hi / cfg.lo, Math.max(0, Math.min(1, brightness))),
-          t,
-          0.08,
-        );
+        g.gain.setTargetAtTime(Math.max(0, Math.min(1, level)) * cfg.gain, t, 0.06);
+        filter.frequency.setTargetAtTime(cfg.lo * Math.pow(cfg.hi / cfg.lo, Math.max(0, Math.min(1, brightness))), t, 0.08);
       },
       stop() {
         if (stopped || !ctx) return;
@@ -283,47 +249,23 @@ export const sound: Sound = {
   },
 };
 
-const LOOPS: Record<
-  LoopKind,
-  { type: BiquadFilterType; q: number; lo: number; hi: number; gain: number }
-> = {
-  hiss: { type: "highpass", q: 0.7, lo: 1200, hi: 5000, gain: 0.1 },
-  rumble: { type: "lowpass", q: 0.8, lo: 180, hi: 1400, gain: 0.35 },
-  trickle: { type: "bandpass", q: 0.9, lo: 1500, hi: 6000, gain: 0.9 },
-  crackle: { type: "highpass", q: 0.5, lo: 600, hi: 3000, gain: 0.8 },
-  bubble: { type: "lowpass", q: 0.5, lo: 900, hi: 3000, gain: 0.3 },
+const LOOPS: Record<LoopKind, { type: BiquadFilterType; q: number; lo: number; hi: number; gain: number }> = {
+  hiss: { type: 'highpass', q: 0.7, lo: 1200, hi: 5000, gain: 0.1 },
+  rumble: { type: 'lowpass', q: 0.8, lo: 180, hi: 1400, gain: 0.35 },
+  trickle: { type: 'bandpass', q: 0.9, lo: 1500, hi: 6000, gain: 0.9 },
+  crackle: { type: 'highpass', q: 0.5, lo: 600, hi: 3000, gain: 0.5 },
+  bubble: { type: 'lowpass', q: 0.5, lo: 900, hi: 3000, gain: 0.3 },
 };
 
-type Synth = (
-  c: AudioContext,
-  out: GainNode,
-  t: number,
-  pitch: number,
-) => number;
+type Synth = (c: AudioContext, out: GainNode, t: number, pitch: number) => number;
 
-function env(
-  g: AudioParam,
-  t: number,
-  peak: number,
-  attack: number,
-  decay: number,
-) {
+function env(g: AudioParam, t: number, peak: number, attack: number, decay: number) {
   g.setValueAtTime(0.0001, t);
   g.exponentialRampToValueAtTime(peak, t + attack);
   g.exponentialRampToValueAtTime(0.0001, t + attack + decay);
 }
 
-function osc(
-  c: AudioContext,
-  type: OscillatorType,
-  f0: number,
-  f1: number,
-  t: number,
-  dur: number,
-  out: AudioNode,
-  peak: number,
-  attack = 0.004,
-) {
+function osc(c: AudioContext, type: OscillatorType, f0: number, f1: number, t: number, dur: number, out: AudioNode, peak: number, attack = 0.004) {
   const o = c.createOscillator();
   o.type = type;
   o.frequency.setValueAtTime(f0, t);
@@ -336,18 +278,7 @@ function osc(
   return o;
 }
 
-function burst(
-  c: AudioContext,
-  t: number,
-  dur: number,
-  out: AudioNode,
-  peak: number,
-  type: BiquadFilterType,
-  f0: number,
-  f1: number,
-  q = 1,
-  attack = 0.002,
-) {
+function burst(c: AudioContext, t: number, dur: number, out: AudioNode, peak: number, type: BiquadFilterType, f0: number, f1: number, q = 1, attack = 0.002) {
   const s = c.createBufferSource();
   s.buffer = noise;
   const f = c.createBiquadFilter();
@@ -364,24 +295,24 @@ function burst(
 
 const VOICES: Record<Voice, Synth> = {
   pop(c, out, t, p) {
-    osc(c, "sine", 520 * p, 1400 * p, t, 0.06, out, 0.55, 0.002);
-    osc(c, "triangle", 1400 * p, 300 * p, t + 0.05, 0.09, out, 0.25);
-    burst(c, t, 0.015, out, 0.2, "highpass", 3000, 3000);
+    osc(c, 'sine', 520 * p, 1400 * p, t, 0.06, out, 0.55, 0.002);
+    osc(c, 'triangle', 1400 * p, 300 * p, t + 0.05, 0.09, out, 0.25);
+    burst(c, t, 0.015, out, 0.2, 'highpass', 3000, 3000);
     return 0.16;
   },
   plop(c, out, t, p) {
-    osc(c, "sine", 180 * p, 620 * p, t, 0.08, out, 0.6);
+    osc(c, 'sine', 180 * p, 620 * p, t, 0.08, out, 0.6);
     return 0.1;
   },
   squish(c, out, t, p) {
-    burst(c, t, 0.16, out, 0.5, "bandpass", 1400 * p, 380 * p, 5, 0.01);
-    osc(c, "sine", 140 * p, 90 * p, t, 0.14, out, 0.25, 0.01);
+    burst(c, t, 0.16, out, 0.5, 'bandpass', 1400 * p, 380 * p, 5, 0.01);
+    osc(c, 'sine', 140 * p, 90 * p, t, 0.14, out, 0.25, 0.01);
     return 0.18;
   },
   boing(c, out, t, p) {
     // A pitch that wobbles and settles, like the jelly it comes from.
     const o = c.createOscillator();
-    o.type = "sine";
+    o.type = 'sine';
     o.frequency.setValueAtTime(190 * p, t);
     const lfo = c.createOscillator();
     lfo.frequency.value = 16;
@@ -399,23 +330,23 @@ const VOICES: Record<Voice, Synth> = {
     return 0.4;
   },
   thud(c, out, t, p) {
-    osc(c, "sine", 110 * p, 45 * p, t, 0.16, out, 0.8, 0.003);
-    burst(c, t, 0.08, out, 0.35, "lowpass", 500 * p, 150, 0.7);
+    osc(c, 'sine', 110 * p, 45 * p, t, 0.16, out, 0.8, 0.003);
+    burst(c, t, 0.08, out, 0.35, 'lowpass', 500 * p, 150, 0.7);
     return 0.2;
   },
   knock(c, out, t, p) {
-    osc(c, "triangle", 620 * p, 480 * p, t, 0.05, out, 0.45, 0.001);
-    osc(c, "sine", 1580 * p, 1500 * p, t, 0.03, out, 0.15, 0.001);
-    burst(c, t, 0.02, out, 0.25, "bandpass", 2500 * p, 1800, 2, 0.001);
+    osc(c, 'triangle', 620 * p, 480 * p, t, 0.05, out, 0.45, 0.001);
+    osc(c, 'sine', 1580 * p, 1500 * p, t, 0.03, out, 0.15, 0.001);
+    burst(c, t, 0.02, out, 0.25, 'bandpass', 2500 * p, 1800, 2, 0.001);
     return 0.08;
   },
   tick(c, out, t, p) {
-    osc(c, "square", 2600 * p, 2200 * p, t, 0.012, out, 0.12, 0.001);
+    osc(c, 'square', 2600 * p, 2200 * p, t, 0.012, out, 0.12, 0.001);
     return 0.03;
   },
   snap(c, out, t, p) {
-    burst(c, t, 0.03, out, 0.7, "highpass", 2500 * p, 2500, 0.7, 0.001);
-    osc(c, "triangle", 1800 * p, 700 * p, t, 0.05, out, 0.3, 0.001);
+    burst(c, t, 0.03, out, 0.7, 'highpass', 2500 * p, 2500, 0.7, 0.001);
+    osc(c, 'triangle', 1800 * p, 700 * p, t, 0.05, out, 0.3, 0.001);
     return 0.08;
   },
   rip(c, out, t, p) {
@@ -428,35 +359,26 @@ const VOICES: Record<Voice, Synth> = {
         0.018,
         out,
         0.35 + Math.random() * 0.3,
-        "bandpass",
+        'bandpass',
         (1800 + Math.random() * 1600) * p,
         1200 * p,
         1.5,
         0.001,
       );
-    burst(c, t, n * 0.024, out, 0.12, "highpass", 900, 2200, 0.7, 0.01);
+    burst(c, t, n * 0.024, out, 0.12, 'highpass', 900, 2200, 0.7, 0.01);
     return n * 0.026 + 0.05;
   },
   splash(c, out, t, p) {
-    burst(c, t, 0.4, out, 0.5, "lowpass", 5000 * p, 700 * p, 0.8, 0.004);
+    burst(c, t, 0.4, out, 0.5, 'lowpass', 5000 * p, 700 * p, 0.8, 0.004);
     for (let k = 0; k < 3; k++)
-      osc(
-        c,
-        "sine",
-        (300 + Math.random() * 400) * p,
-        (900 + Math.random() * 500) * p,
-        t + 0.03 + Math.random() * 0.15,
-        0.05,
-        out,
-        0.18,
-      );
+      osc(c, 'sine', (300 + Math.random() * 400) * p, (900 + Math.random() * 500) * p, t + 0.03 + Math.random() * 0.15, 0.05, out, 0.18);
     return 0.45;
   },
   whoosh(c, out, t, p) {
     const s = c.createBufferSource();
     s.buffer = noise;
     const f = c.createBiquadFilter();
-    f.type = "bandpass";
+    f.type = 'bandpass';
     f.Q.value = 1.2;
     f.frequency.setValueAtTime(300 * p, t);
     f.frequency.exponentialRampToValueAtTime(1600 * p, t + 0.14);
@@ -479,17 +401,17 @@ const VOICES: Record<Voice, Synth> = {
         0.04 + Math.random() * 0.06,
         out,
         0.2 + Math.random() * 0.3,
-        "lowpass",
+        'lowpass',
         (500 + Math.random() * 1400) * p,
         250,
         0.8,
         0.002,
       );
-    osc(c, "sine", 80 * p, 50 * p, t, 0.2, out, 0.25, 0.01);
+    osc(c, 'sine', 80 * p, 50 * p, t, 0.2, out, 0.25, 0.01);
     return 0.32;
   },
   sizzle(c, out, t, p) {
-    burst(c, t, 0.35, out, 0.25, "highpass", 3500 * p, 5000 * p, 0.7, 0.01);
+    burst(c, t, 0.35, out, 0.25, 'highpass', 3500 * p, 5000 * p, 0.7, 0.01);
     return 0.38;
   },
   chime(c, out, t, p) {
@@ -497,8 +419,8 @@ const VOICES: Record<Voice, Synth> = {
     const notes = [1, 1.26, 1.5, 2];
     notes.forEach((m, k) => {
       const f = 880 * p * m;
-      osc(c, "sine", f, f, t + k * 0.07, 0.9, out, 0.22, 0.003);
-      osc(c, "sine", f * 2.76, f * 2.76, t + k * 0.07, 0.25, out, 0.05, 0.002);
+      osc(c, 'sine', f, f, t + k * 0.07, 0.9, out, 0.22, 0.003);
+      osc(c, 'sine', f * 2.76, f * 2.76, t + k * 0.07, 0.25, out, 0.05, 0.002);
     });
     return 1.2;
   },
