@@ -25,6 +25,7 @@
     "@webgpu/types": "^0.1.74",
     "gifenc": "^1.0.3",
     "jpeg-js": "^0.4.4",
+    "mediabunny": "^1.61.0",
     "playwright": "^1.63.0",
     "pngjs": "^7.0.0",
     "typescript": "~5.9.2",

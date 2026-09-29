@@ -19,7 +19,9 @@ public class MainActivity extends BridgeActivity {
         boolean autoplay = getIntent().getBooleanExtra("BOBO_AUTOPLAY", false);
         if (debuggable && (toy != null || autoplay)) {
             final String js = (autoplay ? "window.boboAutoplay = true;" : "")
-                + (toy != null && toy.matches("[a-z0-9-]+") ? "location.hash = '" + toy + "';" : "");
+                + (toy != null && toy.matches("[a-z0-9-]+") ? "location.hash = '" + toy + "';"
+                    // No toy: re-route so the hub remounts and sees the autoplay flag.
+                    : "window.dispatchEvent(new HashChangeEvent('hashchange'));");
             getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript(js, null), 1500);
         }
     }

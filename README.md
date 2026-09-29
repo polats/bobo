@@ -25,7 +25,7 @@ A physics sandbox for playing with novel, satisfying, performant simulations —
 | **Ferro Blob** | Drag a magnet under a dish of black ferrofluid: it crawls after you and bristles with spikes; two fingers split it, taps drop droplets. | Double-density particle liquid + Rosensweig spike lattice + chrome shading on WebGL2 (`src/toys/ferro`) |
 | **Laundry Line** | Washing pegged to a sagging line: swipe for gusts, hold for a storm; pegs pop and laundry blows away. | XPBD cloth + rope on CPU + WebGL2 (`src/toys/laundry`) |
 
-Every toy has a **Tune** panel (top right) with live sliders, a **Based on** list linking the papers and reference code it uses, and an FPS readout (top centre).
+The hub shows each toy as a live preview card; tap one for its sheet (description, papers, Play). Every toy has a **Tune** panel (top right) with live sliders, a **Based on** list linking the papers and reference code it uses, and an FPS readout (top centre).
 
 Play it: https://bobo-ashy-ten.vercel.app (redeploys on every push to `main`).
 
@@ -94,4 +94,5 @@ mobile/build-ios.mjs   Capacitor iOS build/install
 
 - [docs/research/physics.md](docs/research/physics.md) — survey of real-time physics simulation techniques (Two Minute Papers, Ten Minute Physics, SIGGRAPH, etc.) and a backlog of sandbox toys to build
 - [docs/research/cloth-knitting.md](docs/research/cloth-knitting.md) — cloth, yarn and knitting simulation: techniques, yarn-level research and how to fake it, browser playgrounds, and ten cloth/knit toy ideas (e.g. unravel a sweater)
+- [docs/research/hub-design.md](docs/research/hub-design.md) — mobile catalog design (HIG / Material 3), preview video formats and playback budgets behind the hub
 - [docs/research/shear-knit.md](docs/research/shear-knit.md) — a shear-the-sheep → spin → knit sandbox: touchscreen haptics and pseudo-haptics, Core Haptics bridge design, shell fur with cut maps, the one-piece fleece as a pinned cloth sheet, spinning twist physics, procedural audio, and a build plan

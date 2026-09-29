@@ -10,7 +10,7 @@ const device=process.env.IOS_DEVICE??execFileSync('xcrun',['devicectl','list','d
   ?.match(/[0-9A-F]{8}-[0-9A-F]{16}/)?.[0];
 if(!device)throw Error('No attached iPhone found; set IOS_DEVICE');
 
-const env=JSON.stringify({BOBO_TOY:toy,BOBO_AUTOPLAY:'1'});
+const env=JSON.stringify(toy==='hub'?{BOBO_AUTOPLAY:'1'}:{BOBO_TOY:toy,BOBO_AUTOPLAY:'1'});
 // devicectl block-buffers piped output, so stream the console into a file and read it at the end.
 mkdirSync('artifacts',{recursive:true});
 const log=`artifacts/soak-${toy}.log`;

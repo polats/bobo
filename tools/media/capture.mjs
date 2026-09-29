@@ -1,12 +1,28 @@
 // Records each toy with autoplay input via CDP screencast into frames/<toy>/ as JPEGs + timestamps.
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread'];
+const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar'];
 const WARM = 1500, DUR = 8400;
+// Capture size: 360×480 (3:4) matches the hub's preview cards; scripted moves were authored at 300×375.
+const VW = Number(process.env.VW ?? 360), VH = Number(process.env.VH ?? 480);
+const scaled = (p) => {
+  const sx = VW / 300, sy = VH / 375;
+  return {
+    raw: p,
+    evaluate: (...a) => p.evaluate(...a),
+    mouse: {
+      move: (x, y, o) => p.mouse.move(x * sx, y * sy, o),
+      down: (o) => p.mouse.down(o),
+      up: (o) => p.mouse.up(o),
+      click: (x, y, o) => p.mouse.click(x * sx, y * sy, o),
+    },
+  };
+};
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // Hand-authored moves for toys where the generic autoplay finger doesn't show them off.
 const scripts = {
-  async thread(p) {
+  async thread(q) {
+    const p = q.raw;
     for (let k = 0; k < 9; k++) {
       const t = await p.evaluate(() => window.__thread());
       const x = t.near.x, y = t.near.y + 6;
@@ -47,6 +63,13 @@ const scripts = {
     await wait(900);
     await tool('Poke'); await pour(30, 300, 1500, 240);
   },
+  async merge(p) {
+    for (let i = 0; i < 12; i++) {
+      const x = 90 + ((i * 53) % 130);
+      await p.mouse.move(x, 70); await p.mouse.down(); await p.mouse.move(x + 4, 72); await p.mouse.up();
+      await wait(620);
+    }
+  },
   async laundry(p) {
     const swipe = async (x0, y0, dx, steps, delay) => {
       await p.mouse.move(x0, y0); await p.mouse.down();
@@ -66,7 +89,7 @@ for (const toy of toys) {
   const dir = `frames/${toy}`;
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  const p = await b.newPage({ viewport: { width: 300, height: 375 }, deviceScaleFactor: 2 });
+  const p = await b.newPage({ viewport: { width: VW, height: VH }, deviceScaleFactor: 2 });
   if (!scripts[toy]) await p.addInitScript(() => { window.boboAutoplay = true; });
   p.on('pageerror', (e) => console.log(toy, 'pageerror:', e.message));
   await p.goto(`http://localhost:5320/#${toy}`);
@@ -78,9 +101,9 @@ for (const toy of toys) {
     frames.push({ data: f.data, ts: f.metadata.timestamp });
     await cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
   });
-  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 88, maxWidth: 600, maxHeight: 750, everyNthFrame: 1 });
+  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 88, maxWidth: VW * 2, maxHeight: VH * 2, everyNthFrame: 1 });
   const t0 = Date.now();
-  if (scripts[toy]) await scripts[toy](p);
+  if (scripts[toy]) await scripts[toy](scaled(p));
   await p.waitForTimeout(Math.max(0, DUR - (Date.now() - t0)));
   await cdp.send('Page.stopScreencast');
   frames.forEach((f, i) => writeFileSync(`${dir}/${String(i).padStart(4, '0')}.jpg`, Buffer.from(f.data, 'base64')));
