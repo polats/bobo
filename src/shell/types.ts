@@ -1,5 +1,6 @@
 import type { Panel } from './panel';
 import type { Pointers } from './pointers';
+import type { Sound } from './sound';
 
 export interface ToyContext {
   canvas: HTMLCanvasElement;
@@ -11,6 +12,8 @@ export interface ToyContext {
   pixelRatio: number;
   /** Short status text shown under the FPS meter (e.g. particle count). */
   setStatus(text: string): void;
+  /** Procedural sound effects and loops (src/shell/sound.ts); silent when muted or locked. */
+  sound: Sound;
   /** Light haptic tick on impacts; no-op where unsupported. */
   haptic(strength?: 'light' | 'medium' | 'heavy'): void;
   /**

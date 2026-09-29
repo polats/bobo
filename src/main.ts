@@ -3,6 +3,8 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Panel } from './shell/panel';
 import { Pointers } from './shell/pointers';
 import { mountHub } from './shell/hub';
+import { soundIcon } from './shell/icons';
+import { onSoundChange, setSoundEnabled, sound, soundEnabled, unlockSound } from './shell/sound';
 import type { Toy, ToyInstance } from './shell/types';
 // Each toy folder exports exactly one Toy from index.ts; the hub lists them in this order.
 const ORDER = ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro'];
@@ -19,6 +21,8 @@ function rank(id: string) {
   return i < 0 ? ORDER.length : i;
 }
 const app = document.getElementById('app')!;
+// Audio can only start inside a user gesture; every tap re-arms it (iOS suspends it in the background).
+document.addEventListener('pointerdown', unlockSound, { capture: true, passive: true });
 
 let teardown: (() => void) | null = null;
 
@@ -41,10 +45,17 @@ function mountToy(toy: Toy): () => void {
   const tune = hudButton('Tune', 'hud-tune', () => panel.toggle());
   const clip = hudButton('● Clip', 'hud-clip', () => recordClip(canvas, clip, stage));
   if (!('MediaRecorder' in window) || !canvas.captureStream) clip.hidden = true;
+  const mute = hudButton('', 'hud-sound', () => setSoundEnabled(!soundEnabled()));
+  const showMute = (on: boolean) => {
+    mute.innerHTML = soundIcon(on);
+    mute.setAttribute('aria-label', on ? 'Mute sound' : 'Unmute sound');
+  };
+  showMute(soundEnabled());
+  const offSound = onSoundChange(showMute);
   const fps = document.createElement('div');
   fps.className = 'hud-fps';
   const meter = makeMeter();
-  stage.append(canvas, overlay, back, tune, clip, fps, meter.el);
+  stage.append(canvas, overlay, back, tune, clip, mute, fps, meter.el);
   app.appendChild(stage);
 
   const panel = new Panel(stage);
@@ -72,7 +83,7 @@ function mountToy(toy: Toy): () => void {
 
   console.log(`[bobo] creating ${toy.id}`);
   toy
-    .create({ canvas, overlay, panel, pointers, pixelRatio, setStatus: (s) => (status = s), haptic, progress: meter.set, celebrate: (msg) => celebrate(stage, msg) })
+    .create({ canvas, overlay, panel, pointers, pixelRatio, setStatus: (s) => (status = s), sound, haptic, progress: meter.set, celebrate: (msg) => celebrate(stage, msg) })
     .then((inst) => {
       if (!alive) return inst.destroy();
       instance = inst;
@@ -128,6 +139,7 @@ function mountToy(toy: Toy): () => void {
     cancelAnimationFrame(raf);
     ro.disconnect();
     pointers.destroy();
+    offSound();
     instance?.destroy();
   };
 }
@@ -185,6 +197,7 @@ function makeMeter() {
 /** Confetti, a toast and a heavy haptic: the shared "you did it" beat. */
 function celebrate(stage: HTMLElement, message = 'Done!') {
   haptic('heavy');
+  sound.play('chime');
   const colors = ['#ff7ab6', '#ffd166', '#6ee7ff', '#8b5cf6', '#7ee787', '#ffffff'];
   const r = stage.getBoundingClientRect();
   for (let i = 0; i < 70; i++) {

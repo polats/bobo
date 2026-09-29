@@ -43,3 +43,9 @@ const FALLBACK = svg('<circle cx="12" cy="12" r="7"/><path d="M12 8v4l2.5 2.5"/>
 export function toyIcon(id: string) {
   return ICONS[id] ?? FALLBACK;
 }
+
+/** Speaker with sound waves, or struck through when muted. */
+export function soundIcon(on: boolean) {
+  const speaker = '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z"/>';
+  return on ? svg(`${speaker}<path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/>`) : svg(`${speaker}<path d="m16 9.5 5 5"/><path d="m21 9.5-5 5"/>`);
+}

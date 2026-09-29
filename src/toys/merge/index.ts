@@ -368,6 +368,7 @@ class JellyMerge implements ToyInstance {
     this.nextTier = this.randomDropTier();
     this.held.clear();
     this.ctx.haptic('light');
+    this.ctx.sound.play('whoosh', { gain: 0.25, pitch: 1.4 - this.heldTier * 0.08, pan: this.pan(cx) });
     // Reload the holder after a beat, so the drop reads.
     setTimeout(() => {
       if (!this.full) this.loadHeld();
@@ -430,6 +431,8 @@ class JellyMerge implements ToyInstance {
       x.firm = 0;
     }
     this.ctx.haptic('light');
+    const t = this.tiers.get(a) ?? 0;
+    this.ctx.sound.play('squish', { pitch: 1.5 * 0.93 ** t, gain: 0.7, pan: this.pan((a.cx + b.cx) / 2) });
   }
 
   /**
@@ -528,6 +531,7 @@ class JellyMerge implements ToyInstance {
       this.burst(cx, cy, 70, FRUIT[LAST].color, 0.5);
       this.score += 200;
       this.ctx.haptic('heavy');
+      this.ctx.sound.play('pop', { pitch: 0.5 });
       this.ctx.celebrate('Double Bobo!');
     } else {
       const nt = t + 1;
@@ -563,6 +567,10 @@ class JellyMerge implements ToyInstance {
       this.hitstop = 0.035 + nt * 0.006;
       if (nt >= 5) this.quake = Math.min(1, 0.35 + (nt - 5) * 0.12);
       this.ctx.haptic(nt >= 7 ? 'heavy' : nt >= 4 ? 'medium' : 'light');
+      // Bigger gummies pop lower; each merge in a chain steps up a semitone, so combos sing.
+      const step = 2 ** (Math.min(12, this.combo - 1) / 12);
+      this.ctx.sound.play('pop', { pitch: 1.7 * 0.9 ** nt * step, gain: 0.6 + nt * 0.04, pan: this.pan(cx) });
+      if (nt >= 4) this.ctx.sound.play('boing', { pitch: 1.3 * 0.92 ** nt, gain: 0.5, pan: this.pan(cx) });
       if (nt > this.maxTier) {
         this.maxTier = nt;
         if (nt === LAST) this.ctx.celebrate(`${FRUIT[LAST].name}!`);
@@ -610,6 +618,11 @@ class JellyMerge implements ToyInstance {
     }
   }
 
+  /** Stereo position for a world x. */
+  private pan(x: number) {
+    return ((x - this.jar[0]) / (this.jar[1] - this.jar[0]) - 0.5) * 1.2;
+  }
+
   private burst(x: number, y: number, n: number, color: [number, number, number], radius: number) {
     for (let k = 0; k < n; k++) {
       const a = Math.random() * Math.PI * 2;
@@ -649,6 +662,7 @@ class JellyMerge implements ToyInstance {
       if (smallest >= 0) {
         const b = this.world.bodies[smallest];
         this.burst(b.cx, b.cy, 12, b.color, this.radius(st));
+        this.ctx.sound.play('pop', { pitch: 2, gain: 0.4, pan: this.pan(b.cx) });
         this.tiers.delete(b);
         this.growing.delete(b);
         this.world.remove(smallest);
@@ -661,6 +675,7 @@ class JellyMerge implements ToyInstance {
     this.card.querySelector('span')!.textContent = `score ${this.score}`;
     this.card.hidden = false;
     this.ctx.haptic('medium');
+    this.ctx.sound.play('thud', { pitch: 0.7 });
   }
 
   private shake() {
@@ -688,6 +703,8 @@ class JellyMerge implements ToyInstance {
     this.card.hidden = true;
     this.loadHeld();
     this.ctx.haptic('heavy');
+    this.ctx.sound.play('whoosh', { pitch: 0.7 });
+    this.ctx.sound.play('boing', { pitch: 0.8 });
   }
 
   /** Landings: soft dust and a tick scaled by impact speed. */
@@ -695,6 +712,7 @@ class JellyMerge implements ToyInstance {
     const w = this.world;
     for (const im of w.impacts) {
       if (im.strength > 1.2) this.ctx.haptic(im.strength > 3 ? 'medium' : 'light');
+      if (im.strength > 0.9) this.ctx.sound.play(im.strength > 2.2 ? 'thud' : 'boing', { gain: Math.min(1, (im.strength - 0.6) / 3), pitch: 1.2, pan: this.pan(im.x) });
       if (im.ground && im.strength > 1.5)
         for (let k = 0; k < 4; k++)
           this.fx.push({
