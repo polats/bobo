@@ -1,7 +1,7 @@
 // The home screen: a "New" carousel and a grid of live preview cards. Tapping a card opens a sheet
 // with the preview, a description and Play; sort, shelves and the previews setting live in a filter sheet.
 import type { Toy } from './types';
-import { CATEGORIES, meta, newCutoff, type Category } from './catalog';
+import { CATEGORIES, lastUpdate, meta, newCutoff, updates, type Category } from './catalog';
 import { toyIcon } from './icons';
 
 type Sort = 'newest' | 'az' | 'shelf';
@@ -125,6 +125,10 @@ class Playback {
 export function mountHub(app: HTMLElement, toys: Toy[]): () => void {
   const cutoff = newCutoff(toys.map((t) => t.id));
   const isNew = (t: Toy) => meta(t.id).added.getTime() >= cutoff;
+  // "Updated" works like "New": a notable update within a day and a half of the latest one.
+  const updatedAt = (t: Toy) => new Date(lastUpdate(t.id)?.date ?? 0).getTime();
+  const updCutoff = Math.max(0, ...toys.map(updatedAt)) - 36 * 3600e3;
+  const isUpdated = (t: Toy) => !!lastUpdate(t.id) && updatedAt(t) >= updCutoff;
   const needsGpu = (t: Toy) => /WebGPU/.test(t.tech);
   let sort = loadPref<Sort>('sort', 'newest');
   let filter = loadPref<string>('filter', 'All');
@@ -174,7 +178,7 @@ export function mountHub(app: HTMLElement, toys: Toy[]): () => void {
     const gpuMark = needsGpu(t) ? `<span class="card-gpu" title="Needs WebGPU">GPU</span>` : '';
     return `<button type="button" class="card${needsGpu(t) && gpuOk === false ? ' dim' : ''}" data-toy="${t.id}">
       ${media(t, 'card-media')}
-      <span class="card-title">${isNew(t) ? '<i class="new-dot" aria-label="New"></i>' : ''}<span>${esc(t.title)}</span>${gpuMark}</span>
+      <span class="card-title">${isNew(t) ? '<i class="new-dot" aria-label="New"></i>' : isUpdated(t) ? '<i class="new-dot upd-dot" aria-label="Updated"></i>' : ''}<span>${esc(t.title)}</span>${gpuMark}</span>
     </button>`;
   }
 
@@ -191,8 +195,22 @@ export function mountHub(app: HTMLElement, toys: Toy[]): () => void {
         .map(
           (t) => `<div class="hero" data-toy="${t.id}">
             ${media(t, 'hero-media')}
-            <span class="hero-new">New</span>
+            <span class="hero-new">New</span>${isUpdated(t) ? '<span class="hero-new hero-upd">Updated</span>' : ''}
             <div class="hero-meta"><div><b>${esc(t.title)}</b><small>${esc(firstSentence(t.blurb))}</small></div>
+            <button type="button" class="hero-play" data-play="${t.id}" aria-label="Play ${esc(t.title)}">${svg(UI_ICON.play)}Play</button></div>
+          </div>`,
+        )
+        .join('')}</div>`;
+    }
+    // Recently updated toys (not already in New), each showing what changed.
+    const touched = toys.filter((t) => isUpdated(t) && !isNew(t)).sort((a, b) => updatedAt(b) - updatedAt(a));
+    if (filter === 'All' && touched.length) {
+      html += `<div class="sec"><h2>Updated</h2><span>${touched.length} ${touched.length === 1 ? 'toy' : 'toys'}</span></div><div class="carousel">${touched
+        .map(
+          (t) => `<div class="hero hero-sm" data-toy="${t.id}">
+            ${media(t, 'hero-media')}
+            <span class="hero-new hero-upd">Updated</span>
+            <div class="hero-meta"><div><b>${esc(t.title)}</b><small>${esc(lastUpdate(t.id)!.note)}</small></div>
             <button type="button" class="hero-play" data-play="${t.id}" aria-label="Play ${esc(t.title)}">${svg(UI_ICON.play)}Play</button></div>
           </div>`,
         )
@@ -247,7 +265,13 @@ export function mountHub(app: HTMLElement, toys: Toy[]): () => void {
       `<span class="tag">${svg(SHELF_ICON[meta(t.id).category])}${meta(t.id).category}</span>`,
       needsGpu(t) ? `<span class="tag">${svg(UI_ICON.gpu)}${blocked ? 'Needs WebGPU · not on this device' : 'WebGPU'}</span>` : '',
       isNew(t) ? `<span class="tag tag-new">New</span>` : '',
+      isUpdated(t) ? `<span class="tag tag-upd">Updated</span>` : '',
     ].join('');
+    const log = updates(t.id);
+    const day = (d: string) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const whatsNew = log.length
+      ? `<div class="whats-new"><h4>What's new</h4><ul>${log.map((u) => `<li><time>${day(u.date)}</time><span>${esc(u.note)}</span></li>`).join('')}</ul></div>`
+      : '';
     toySheet.innerHTML = `<div class="grabber"></div>
       <div class="sheet-media">${
         p
@@ -258,6 +282,7 @@ export function mountHub(app: HTMLElement, toys: Toy[]): () => void {
       <p class="sheet-blurb">${esc(t.blurb)}</p>
       <div class="tags">${tags}</div>
       <button type="button" class="cta" data-play="${t.id}" ${blocked ? 'disabled' : ''}>${svg(UI_ICON.play)}${blocked ? 'Not available here' : 'Play'}</button>
+      ${whatsNew}
       <details class="papers"><summary>Based on ${t.refs.length} ${t.refs.length === 1 ? 'source' : 'papers & sources'}${svg(UI_ICON.chevron)}</summary>
         <ul>${t.refs.map((r) => `<li><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></li>`).join('')}</ul>
       </details>`;

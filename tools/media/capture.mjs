@@ -1,7 +1,7 @@
 // Records each toy with autoplay input via CDP screencast into frames/<toy>/ as JPEGs + timestamps.
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool'];
+const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool', 'dig'];
 const WARM = 1500, DUR = 8400;
 // Capture size: 360×480 (3:4) matches the hub's preview cards; scripted moves were authored at 300×375.
 const VW = Number(process.env.VW ?? 360), VH = Number(process.env.VH ?? 480);
@@ -62,6 +62,19 @@ const scripts = {
     await tool('Water'); await pour(250, 60, 900, -40);
     await wait(900);
     await tool('Poke'); await pour(30, 300, 1500, 240);
+  },
+  async dig(p) {
+    // Dig a pit under the lawn, tunnel sideways to undercut it, then drill down.
+    const stroke = async (pts, delay) => {
+      await p.mouse.move(...pts[0]); await p.mouse.down();
+      for (const q of pts.slice(1)) { await p.mouse.move(...q); await wait(delay); }
+      await p.mouse.up();
+    };
+    await wait(400);
+    await stroke(Array.from({ length: 26 }, (_, i) => [140 + Math.sin(i / 2) * 30, 118 + i * 4]), 22);
+    await stroke(Array.from({ length: 22 }, (_, i) => [140 + i * 5, 205 + Math.sin(i / 3) * 8]), 22);
+    await wait(900);
+    await stroke(Array.from({ length: 90 }, (_, i) => [150 + Math.sin(i / 4) * 50, 290 + Math.sin(i / 7) * 10]), 26);
   },
   async spool(p) {
     // Tap the four spools in turn so several yarns reel at once.

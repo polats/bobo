@@ -1,15 +1,14 @@
 <!doctype html><html><head><style>
 html,body{margin:0;background:transparent;font-family:-apple-system,"SF Pro Rounded",ui-rounded,sans-serif}
-.wrap{position:relative;width:1280px;height:640px}
-.title{position:absolute;left:0;top:0;width:512px;height:320px;background:linear-gradient(135deg,#ff7ab6,#8b5cf6 55%,#22d3ee);overflow:hidden}
-.title svg{position:absolute;left:18px;top:52px;width:210px;height:210px}
-.title h1{position:absolute;left:236px;top:78px;margin:0;font-size:92px;font-weight:800;letter-spacing:-5px;color:#fff;text-shadow:0 4px 18px rgba(40,0,60,.35)}
-.title p{position:absolute;left:240px;top:190px;margin:0;font-size:19px;font-weight:700;color:#fff;line-height:1.45;white-space:nowrap}.title p span{font-size:15px;font-weight:600;opacity:.85}
-.lab{position:absolute;padding:4px 10px;border-radius:99px;background:rgba(8,8,14,.62);color:#fff;font-size:14px;font-weight:700;letter-spacing:-.2px}
-.grid{position:absolute;inset:0}
-.grid i{position:absolute;width:0;height:640px;border-left:2px solid rgba(7,7,11,.9)}
-.grid b{position:absolute;height:0;width:1280px;border-top:2px solid rgba(7,7,11,.9);top:319px}
-</style></head><body><div class="wrap">
+.wrap{position:relative;width:1344px;height:768px}
+.title{position:absolute;left:0;top:0;width:576px;height:256px;background:linear-gradient(135deg,#ff7ab6,#8b5cf6 55%,#22d3ee);overflow:hidden}
+.title svg{position:absolute;left:14px;top:34px;width:190px;height:190px}
+.title h1{position:absolute;left:210px;top:44px;margin:0;font-size:92px;font-weight:800;letter-spacing:-5px;color:#fff;text-shadow:0 4px 18px rgba(40,0,60,.35)}
+.title p{position:absolute;left:214px;top:156px;margin:0;font-size:19px;font-weight:700;color:#fff;line-height:1.45;white-space:nowrap}.title p span{font-size:15px;font-weight:600;opacity:.85}
+.lab{position:absolute;padding:4px 9px;border-radius:99px;background:rgba(8,8,14,.62);color:#fff;font-size:13px;font-weight:700;letter-spacing:-.2px;white-space:nowrap}
+.v{position:absolute;width:0;border-left:2px solid rgba(7,7,11,.9)}
+.h{position:absolute;height:0;border-top:2px solid rgba(7,7,11,.9)}
+</style></head><body><div class="wrap" id="wrap">
 <div class="title"><svg viewBox="0 0 1024 1024"><defs>
   <radialGradient id="body" cx="38%" cy="30%" r="75%">
     <stop offset="0" stop-color="#fff3fb"/>
@@ -33,7 +32,36 @@ html,body{margin:0;background:transparent;font-family:-apple-system,"SF Pro Roun
 <path d="M470 650q42 34 84 0" fill="none" stroke="#2a0a2e" stroke-width="16" stroke-linecap="round"/>
 <ellipse cx="352" cy="640" rx="40" ry="22" fill="#ff2f86" opacity="0.45"/>
 <ellipse cx="672" cy="640" rx="40" ry="22" fill="#ff2f86" opacity="0.45"/>
-</svg><h1>bobo</h1><p>physics toys you can poke<br><span>fluids · goo · sand · cloth · yarn</span></p></div>
-<div class="lab" style="left:522px;top:284px">Ink Swirl</div><div class="lab" style="left:778px;top:284px">Goo Lab</div><div class="lab" style="left:1034px;top:284px">Alchemy Sandbox</div><div class="lab" style="left:10px;top:604px">Ripple Pool</div><div class="lab" style="left:266px;top:604px">Splash Tank</div><div class="lab" style="left:522px;top:604px">Tear Sheet</div><div class="lab" style="left:778px;top:604px">Laundry Line</div><div class="lab" style="left:1034px;top:604px">Pull the Thread</div>
-<div class="grid"><i style="left:255px;top:320px"></i><i style="left:511px"></i><i style="left:767px"></i><i style="left:1023px"></i><i style="left:255px;height:320px;top:320px"></i><b></b></div>
-</div></body></html>
+</svg><h1>bobo</h1><p>18 physics toys you can poke<br><span>fluids · goo · sand · cloth · yarn · dirt</span></p></div>
+</div><script>
+// Keep in sync with encode.mjs: 7×3 cells of 192×256, the title spans the first three.
+const CW = 192, CH = 256;
+const labels = ['Ink Swirl', 'Goo Lab', 'Alchemy Sandbox', 'Ripple Pool', 'Splash Tank', 'Tear Sheet', 'Laundry Line', 'Pull the Thread', 'Campfire', 'Jelly Stack', 'Demolition Tower', 'Ferro Blob', 'Marbling Tray', 'Jelly Merge', 'Power Rinse', 'Sand Jar', 'Spool Sort', 'Dig Down'];
+const wrap = document.getElementById('wrap');
+labels.forEach((t, i) => {
+  const c = i + 3, x = (c % 7) * CW, y = Math.floor(c / 7) * CH;
+  const l = document.createElement('div');
+  l.className = 'lab';
+  l.textContent = t;
+  l.style.left = x + 8 + 'px';
+  l.style.top = y + CH - 32 + 'px';
+  wrap.append(l);
+});
+for (let c = 1; c < 7; c++) {
+  const v = document.createElement('i');
+  v.className = 'v';
+  v.style.left = c * CW - 1 + 'px';
+  // No lines inside the title tile.
+  v.style.top = (c < 3 ? CH : 0) + 'px';
+  v.style.height = (c < 3 ? 2 * CH : 3 * CH) + 'px';
+  wrap.append(v);
+}
+for (let r = 1; r < 3; r++) {
+  const h = document.createElement('b');
+  h.className = 'h';
+  h.style.top = r * CH - 1 + 'px';
+  h.style.left = '0px';
+  h.style.width = 7 * CW + 'px';
+  wrap.append(h);
+}
+</script></body></html>

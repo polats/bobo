@@ -3,20 +3,20 @@ import { Program, compile, createDouble, createTarget, destroyTarget, gridSize, 
 import * as F from '../ink/shaders';
 import * as S from './shaders';
 import type { Loop } from '../../shell/sound';
-import { Burn } from './burn';
+import { Burn, jarDist, type Jar } from './burn';
 
 export const fireToy: Toy = {
   id: 'fire',
   title: 'Campfire',
-  blurb: 'Stack logs, strike a match, blow on the embers. Fire climbs the wood; douse it and it hisses.',
-  tech: 'Fire fluid + burning cells · WebGL2',
+  blurb: 'Stack logs, strike a match, blow on the embers. Fire climbs the wood; douse it and it hisses, or trap it under a jar and watch it gasp.',
+  tech: 'Fire fluid + burning cells + oxygen field · WebGL2',
   swatch: 'linear-gradient(145deg,#ff9a1f,#e8410f 50%,#3a0d2e)',
   refs: [
     {
       short: 'TMP #21',
       title: 'Ten Minute Physics #21 — fire simulation',
       url: 'https://matthias-research.github.io/pages/tenMinutePhysics/index.html',
-      use: 'Fire as a grid fluid with temperature: buoyancy lifts hot gas, cooling fades it.',
+      use: 'Fire as a grid fluid with temperature: buoyancy lifts hot gas, cooling fades it. Plus an oxygen scalar on the burn grid (idea from Fire-X / FlameForge): burning uses it up, so a covered fire starves and a blown one roars.',
     },
     {
       short: 'Stam 1999',
@@ -42,15 +42,32 @@ export const fireToy: Toy = {
   },
 };
 
-type Tool = 'match' | 'wood' | 'blow' | 'water';
+type Tool = 'match' | 'wood' | 'blow' | 'water' | 'jar';
 const TOOLS: { id: Tool; label: string; glyph: string; swatch: string }[] = [
   { id: 'match', label: 'Match', glyph: '🔥', swatch: '#ff8a1f' },
   { id: 'wood', label: 'Logs', glyph: '🪵', swatch: '#9a6232' },
   { id: 'blow', label: 'Blow', glyph: '💨', swatch: '#cfe3ff' },
   { id: 'water', label: 'Water', glyph: '💧', swatch: '#3d8bff' },
+  { id: 'jar', label: 'Glass jar', glyph: '🫙', swatch: '#9fc4d8' },
 ];
 
 const GROUND = 0.14;
+/** Bell jar size in screen-height units: tall enough to clear the teepee. */
+const JAR_RX = 0.16;
+const JAR_RY = 0.3;
+/** Resting rim height: pressed just into the dirt, sealed. */
+const JAR_REST = GROUND - 0.004;
+
+/** The jar as the burn grid sees it, plus who's holding it and how it got there. */
+interface JarState extends Jar {
+  vy: number;
+  holder: number | null;
+  gx: number;
+  gy: number;
+  held: number;
+  moved: number;
+  grabbed: boolean;
+}
 
 class Campfire implements ToyInstance {
   private gl: WebGL2RenderingContext;
@@ -65,6 +82,8 @@ class Campfire implements ToyInstance {
   private bloom: Target[] = [];
   private burn!: Burn;
   private burnTex!: WebGLTexture;
+  private oxyTex!: WebGLTexture;
+  private jar: JarState | null = null;
   private emberVao: WebGLVertexArrayObject;
   private emberBuf: WebGLBuffer;
   private emberData = new Float32Array(900 * 4);
@@ -75,8 +94,9 @@ class Campfire implements ToyInstance {
   private buttons: HTMLButtonElement[] = [];
   private lastPos = new Map<number, [number, number]>();
   private wind = 0;
-  private oxygen = 0;
-  /** The fire itself: crackle from how much is burning, a roar when it's fed air, steam when doused. */
+  /** Recent blowing, 0..1.5 (the oxygen itself lives per cell in the burn grid). */
+  private gust = 0;
+  /** The fire itself: crackle from how much is burning and how well it's fed, a roar when blown on, steam when doused. */
   private crackle: Loop;
   private roar: Loop;
   private steam: Loop;
@@ -130,6 +150,7 @@ class Campfire implements ToyInstance {
       buoyancy: mk(S.buoyancyFrag),
       emission: mk(S.emissionFrag),
       display: mk(S.displayFrag),
+      jarVel: mk(S.jarVelFrag),
       ember: new Program(gl, compile(gl, gl.VERTEX_SHADER, S.emberVert), S.emberFrag),
     };
     this.quad = gl.createVertexArray()!;
@@ -178,7 +199,8 @@ class Campfire implements ToyInstance {
     const [cw, ch] = gridSize(this.cfg.burnRes, this.width, this.height);
     const old = this.burn;
     this.burn = new Burn(cw, ch);
-    Object.assign(this.burn.cfg, { spread: this.cfg.spread, burnRate: this.cfg.burnRate, emberRate: this.cfg.embers });
+    Object.assign(this.burn.cfg, { spread: this.cfg.spread, burnRate: this.cfg.burnRate, emberRate: this.cfg.embers, ground: GROUND });
+    this.burn.jar = this.jar;
     if (old) this.buildCampfire();
     this.burnTex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.burnTex);
@@ -187,6 +209,14 @@ class Campfire implements ToyInstance {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, cw, ch, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    this.oxyTex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.oxyTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); // R8 rows needn't be 4-byte multiples
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, cw, ch, 0, gl.RED, gl.UNSIGNED_BYTE, null);
     this.ctx.setStatus(`fluid ${sw}×${sh} · burn ${cw}×${ch}`);
   }
 
@@ -200,12 +230,14 @@ class Campfire implements ToyInstance {
     for (const t of [this.divergence, this.curl, this.emission, ...this.bloom]) destroyTarget(gl, t);
     this.bloom = [];
     gl.deleteTexture(this.burnTex);
+    gl.deleteTexture(this.oxyTex);
   }
 
   /** A little teepee of logs over a cross-piece, already smouldering at the base. */
   private buildCampfire() {
     const b = this.burn;
     b.clearAll();
+    this.jar = b.jar = null;
     const aspect = this.width / this.height;
     const cx = 0.5;
     const s = Math.min(1, 0.55 / aspect) * 0.5; // keep the fire a sensible size in landscape
@@ -260,39 +292,49 @@ class Campfire implements ToyInstance {
     panel.slider(c, 'embers', { label: 'Embers', min: 0, max: 4, step: 0.1, onChange: sync });
     panel.slider(c, 'bloom', { label: 'Glow', min: 0, max: 2, step: 0.05 });
     panel.action('New campfire', () => this.buildCampfire());
-    panel.action('Clear everything', () => this.burn.clearAll());
+    panel.action('Clear everything', () => {
+      this.burn.clearAll();
+      this.jar = this.burn.jar = null;
+    });
   }
 
   // ---------------------------------------------------------------- frame
 
   frame(dt: number, t: number) {
     this.handleInput(dt);
+    this.updateJar(dt);
     this.wind *= Math.exp(-dt * 1.5);
-    this.oxygen *= Math.exp(-dt * 1.2);
-    this.burn.cfg.oxygen = this.oxygen;
+    this.gust *= Math.exp(-dt * 1.2);
     this.burn.step(dt, this.wind);
     if (this.burn.newlyLit > 6) this.ctx.haptic('light');
     this.listen(dt);
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.burnTex);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.burn.w, this.burn.h, gl.RGBA, gl.UNSIGNED_BYTE, this.burn.tex);
+    gl.bindTexture(gl.TEXTURE_2D, this.oxyTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.burn.w, this.burn.h, gl.RED, gl.UNSIGNED_BYTE, this.burn.oxyTex);
     this.step(dt, t);
     this.render(t);
-    this.ctx.setStatus(`fire ${Math.round(this.burn.intensity * 100)}% · ${this.burn.embers.length} embers`);
+    const air = this.burn.intensity > 0.005 ? ` · air ${Math.round(Math.min(2, this.burn.fed) * 100)}%` : '';
+    this.ctx.setStatus(`fire ${Math.round(this.burn.intensity * 100)}%${air} · ${this.burn.embers.length} embers`);
   }
 
   /** Loops follow the burn state (all CPU-side); sparks pop now and then from wherever it's burning. */
   private listen(dt: number) {
     const b = this.burn;
     const fire = Math.min(1, b.intensity);
-    const air = Math.min(1, this.oxygen);
-    this.crackle.set(Math.min(1, fire * 0.8 + fire * air * 0.3), 0.35 + fire * 0.3 + air * 0.3);
-    this.roar.set(Math.min(1, fire * (0.15 + air * 0.75)), 0.2 + air * 0.6);
+    // How well-fed the burning cells are: starved embers tick quietly, a blown-on fire roars.
+    const air = Math.max(0, Math.min(1, (b.fed - 0.15) / 0.7));
+    const rich = Math.min(1, Math.max(0, b.fed - 1) * 2 + this.gust * 0.6);
+    const j = this.jar;
+    const muffle = j && Math.abs(b.cx - j.x) * (this.width / this.height) < JAR_RX ? j.seal : 0; // heard through glass
+    this.crackle.set(Math.min(1, fire * (0.3 + 0.6 * air + 0.2 * rich) * (1 - 0.35 * muffle)), 0.2 + fire * 0.2 + air * 0.3 + rich * 0.2 - muffle * 0.2);
+    this.roar.set(Math.min(1, fire * (0.05 + air * 0.2 + rich * 0.8)), 0.2 + rich * 0.6);
     this.hissing += (this.hissFrame - this.hissing) * Math.min(1, dt * 8);
     this.hissFrame = 0;
     this.steam.set(Math.min(0.8, this.hissing / 60), 0.7);
     // Sap pockets bursting: more often in a bigger, better-fed fire.
-    if (Math.random() < fire * dt * (1.2 + air * 4)) {
+    if (Math.random() < fire * dt * (0.3 + air * 1.2 + rich * 4)) {
       this.ctx.sound.play('pop', { gain: 0.08 + Math.random() * 0.2, pitch: 1.6 + Math.random() * 1.2, pan: (b.cx - 0.5) * 1.2 });
     }
     // New wood catching in a rush.
@@ -340,7 +382,10 @@ class Campfire implements ToyInstance {
           if (speed > 0.05) {
             this.splat(this.velocity, p.x, p.y, dx * 5000, dy * 5000, [0, 0, 0], 0.35);
             this.wind = Math.max(-1.5, Math.min(1.5, this.wind + dx * 18));
-            this.oxygen = Math.min(1.5, this.oxygen + speed * dt * 1.5);
+            this.gust = Math.min(1.5, this.gust + speed * dt * 1.5);
+            // Fresh air along the whole stroke, richer the faster you blow.
+            const puff = Math.min(0.25, speed * dt * 0.6);
+            for (let k = 0; k <= 2; k++) this.burn.breathe(last[0] + (p.x - last[0]) * k * 0.5, last[1] + (p.y - last[1]) * k * 0.5, 0.08, puff);
             if (speed > 1) this.ctx.haptic('light');
             if (speed > 0.8 && this.whooshCool <= 0) {
               this.whooshCool = 0.3;
@@ -362,9 +407,85 @@ class Campfire implements ToyInstance {
           }
           break;
         }
+        case 'jar': {
+          this.holdJar(p.id, p.x, p.y, p.justDown, dt);
+          break;
+        }
       }
     }
     for (const id of [...this.lastPos.keys()]) if (!this.ctx.pointers.active.has(id)) this.lastPos.delete(id);
+  }
+
+  // ---------------------------------------------------------------- the jar
+
+  /** Touch near the jar to pick it up; anywhere else brings it (one jar), held by its knob. */
+  private holdJar(id: number, x: number, y: number, down: boolean, dt: number) {
+    let j = this.jar;
+    if (down && (!j || j.holder === null)) {
+      const d = j ? jarDist(j, x, y - 0.04, this.width / this.height) : null;
+      if (j && d !== null && d < 0.05) {
+        Object.assign(j, { holder: id, gx: j.x - x, gy: j.y - y, grabbed: true });
+      } else {
+        const gy = -(JAR_RY + 0.025);
+        j = this.jar = { x, y: Math.max(JAR_REST, y + gy), rx: JAR_RX, ry: JAR_RY, seal: 0, vy: 0, holder: id, gx: 0, gy, held: 0, moved: 0, grabbed: false };
+        this.burn.jar = j;
+        this.ctx.sound.play('whoosh', { gain: 0.12, pitch: 1.4, pan: (x - 0.5) * 1.2 });
+      }
+      j.held = j.moved = 0;
+      j.vy = 0;
+    }
+    if (!j || j.holder !== id) return;
+    const nx = x + j.gx, ny = Math.max(JAR_REST, y + j.gy);
+    j.moved += Math.hypot(nx - j.x, ny - j.y);
+    j.held += dt;
+    if (ny <= JAR_REST && j.y > JAR_REST + 0.003) this.clink(Math.min(1, (j.y - ny) / Math.max(dt, 1e-3) / 2));
+    j.x = nx;
+    j.y = ny;
+  }
+
+  /** Let go (it drops onto the ground), and lift away on a tap or when let go up high. */
+  private updateJar(dt: number) {
+    const j = this.jar;
+    if (!j) return;
+    if (j.holder !== null && !this.ctx.pointers.active.has(j.holder)) {
+      j.holder = null;
+      if ((j.grabbed && j.moved < 0.015 && j.held < 0.3) || j.y > GROUND + 0.4) return this.liftJar();
+    }
+    if (j.holder === null && j.y > JAR_REST) {
+      j.vy -= 3.5 * dt;
+      j.y += j.vy * dt;
+      if (j.y <= JAR_REST) {
+        j.y = JAR_REST;
+        this.clink(Math.min(1, -j.vy / 2));
+        j.vy = 0;
+      }
+    }
+    // Any gap under the rim lets air in; pressed onto the ground it's sealed.
+    j.seal = 1 - Math.min(1, Math.max(0, (j.y - JAR_REST) / 0.05));
+  }
+
+  private clink(speed: number) {
+    const pan = ((this.jar?.x ?? 0.5) - 0.5) * 1.2;
+    this.ctx.sound.play('knock', { gain: 0.15 + speed * 0.4, pitch: 2.6, pan });
+    this.ctx.sound.play('chime', { gain: 0.05 + speed * 0.1, pitch: 1.7, pan });
+    this.ctx.haptic('medium');
+  }
+
+  /** Lifting a sealed jar off a smouldering fire: the rush of air brings it roaring back. */
+  private liftJar() {
+    const j = this.jar;
+    if (!j) return;
+    const b = this.burn;
+    const under = Math.abs(b.cx - j.x) * (this.width / this.height) < JAR_RX && b.cy < j.y + JAR_RY;
+    if (j.seal > 0.5 && under && b.intensity > 0.01) {
+      b.breathe(j.x, j.y + JAR_RY * 0.3, JAR_RY * 0.5, 0.6);
+      this.splat(this.heat, j.x, j.y + JAR_RY * 0.35, 0, 0, [0.6, 0.25, 0], 0.5);
+      this.ctx.sound.play('whoosh', { gain: 0.6, pitch: 0.55, pan: (j.x - 0.5) * 1.2 });
+      this.ctx.haptic('heavy');
+    } else {
+      this.ctx.sound.play('whoosh', { gain: 0.15, pitch: 1.3, pan: (j.x - 0.5) * 1.2 });
+    }
+    this.jar = b.jar = null;
   }
 
   private splat(target: DoubleTarget, x: number, y: number, vx: number, vy: number, color: [number, number, number], radius: number) {
@@ -395,9 +516,12 @@ class Campfire implements ToyInstance {
     gl.uniform1f(u.time, t % 1000);
     gl.uniform1f(u.heatRate, c.heatRate);
     gl.uniform1f(u.cooling, c.cooling);
-    gl.uniform1f(u.oxygen, this.oxygen);
+    gl.uniform1f(u.aspect, this.width / this.height);
+    gl.uniform1i(u.uOxy, 2);
+    this.jarUniforms(u);
     this.bindTex(0, this.heat.read.tex);
     this.bindTex(1, this.burnTex);
+    this.bindTex(2, this.oxyTex);
     this.blit(this.heat.write);
     this.heat.swap();
 
@@ -462,6 +586,16 @@ class Campfire implements ToyInstance {
     this.blit(vel.write);
     vel.swap();
 
+    if (this.jar) {
+      u = this.p.jarVel.use();
+      gl.uniform1i(u.uVelocity, 0);
+      gl.uniform1f(u.aspect, this.width / this.height);
+      this.jarUniforms(u);
+      this.bindTex(0, vel.read.tex);
+      this.blit(vel.write);
+      vel.swap();
+    }
+
     u = this.p.advect.use();
     gl.uniform2f(u.texelSize, vel.texelX, vel.texelY);
     gl.uniform2f(u.velTexelSize, vel.texelX, vel.texelY);
@@ -482,10 +616,18 @@ class Campfire implements ToyInstance {
     this.heat.swap();
   }
 
+  private jarUniforms(u: Record<string, WebGLUniformLocation>) {
+    const j = this.jar;
+    this.gl.uniform4f(u.jar, j?.x ?? 0, j?.y ?? 0, j ? 1 : 0, j?.seal ?? 0);
+    this.gl.uniform2f(u.jarR, JAR_RX, JAR_RY);
+  }
+
   private sceneUniforms(u: Record<string, WebGLUniformLocation>, t: number) {
     const gl = this.gl;
     gl.uniform1i(u.uHeat, 0);
     gl.uniform1i(u.uBurn, 1);
+    gl.uniform1i(u.uOxy, 3);
+    this.jarUniforms(u);
     gl.uniform2f(u.burnTexel, 1 / this.burn.w, 1 / this.burn.h);
     gl.uniform1f(u.time, t % 1000);
     gl.uniform1f(u.groundY, GROUND);
@@ -493,6 +635,7 @@ class Campfire implements ToyInstance {
     gl.uniform3f(u.light, this.burn.cx, Math.max(GROUND, this.burn.cy + 0.04), Math.min(1, this.burn.intensity));
     this.bindTex(0, this.heat.read.tex);
     this.bindTex(1, this.burnTex);
+    this.bindTex(3, this.oxyTex);
   }
 
   private render(t: number) {

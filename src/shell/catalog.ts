@@ -23,12 +23,49 @@ const CATALOG: Record<string, Entry> = {
   demolition: { added: '2026-09-24T12:49:33+02:00', category: 'Smash & build' },
   ferro: { added: '2026-09-24T12:50:23+02:00', category: 'Fluids' },
   jelly: { added: '2026-09-24T12:55:17+02:00', category: 'Soft & squishy' },
-  marble: { added: '2026-09-29T18:00:00+02:00', category: 'Make & reveal' },
-  merge: { added: '2026-09-29T18:00:00+02:00', category: 'Soft & squishy' },
-  rinse: { added: '2026-09-29T18:00:00+02:00', category: 'Make & reveal' },
-  sandjar: { added: '2026-09-29T18:00:00+02:00', category: 'Make & reveal' },
-  spool: { added: '2026-09-29T11:40:34-04:00', category: 'Cloth & yarn' },
+  marble: { added: '2026-09-29T10:18:46-04:00', category: 'Make & reveal' },
+  merge: { added: '2026-09-29T10:18:47-04:00', category: 'Soft & squishy' },
+  rinse: { added: '2026-09-29T10:23:12-04:00', category: 'Make & reveal' },
+  sandjar: { added: '2026-09-29T10:21:38-04:00', category: 'Make & reveal' },
+  dig: { added: '2026-09-29T12:08:03-04:00', category: 'Sand & powder' },
+  spool: { added: '2026-09-29T11:46:37-04:00', category: 'Cloth & yarn' },
 };
+
+export interface Update {
+  date: string;
+  note: string;
+  /** Small or across-the-board changes: listed on the toy's sheet but don't flag it as updated. */
+  minor?: boolean;
+}
+
+const SOUND: Update = { date: '2026-09-29T11:46:37-04:00', note: 'Sound: procedural effects that follow the physics, with a mute toggle.', minor: true };
+
+/** What changed since each toy shipped, newest first. Add a line when a toy gets a notable update. */
+const UPDATES: Record<string, Update[]> = {
+  merge: [
+    { date: '2026-09-29T11:35:29-04:00', note: 'Sound: squishes and pops that climb a semitone with every combo.' },
+    { date: '2026-09-29T11:21:46-04:00', note: 'Merges smoosh together and pop: hit-stop, a stretched spring-back, a shockwave that jolts the pile.' },
+    { date: '2026-09-29T11:09:10-04:00', note: 'Fixed gummies getting stuck inside each other and flying off.' },
+  ],
+  spool: [{ date: '2026-09-29T11:57:26-04:00', note: 'The rack never jams: spools now bring colours you can reach.' }],
+  fire: [{ date: '2026-09-29T12:34:05-04:00', note: 'Oxygen: drop a glass jar over the fire to choke it to embers, lift it for a whoosh of flame. Blowing feeds the fire air.' }, SOUND],
+  demolition: [
+    { date: '2026-09-29T12:36:24-04:00', note: 'The wrecking ball now knocks sleeping towers apart, rubble stops rolling, and tall stacks stand still.' },
+    SOUND,
+  ],
+  goo: [{ date: '2026-09-29T12:34:05-04:00', note: 'Snow and sand glitter: each grain catches the light as it tumbles (toggle in Tune).' }, SOUND],
+};
+
+/** A toy's updates, newest first (the shared sound pass included). */
+export function updates(id: string): Update[] {
+  const own = UPDATES[id] ?? [];
+  return own.includes(SOUND) || id === 'merge' || id === 'spool' || id === 'dig' ? own : [...own, SOUND];
+}
+
+/** Latest notable update, if any. */
+export function lastUpdate(id: string): Update | undefined {
+  return updates(id).find((u) => !u.minor);
+}
 
 export function meta(id: string): { added: Date; category: Category } {
   const e = CATALOG[id];

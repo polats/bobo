@@ -8,7 +8,7 @@ import compositeSrc from './composite.wgsl?raw';
 const CAPACITY = 100_000;
 const STRIDE = 64;
 const FLOATS = STRIDE / 4;
-const PARAM_BYTES = 352;
+const PARAM_BYTES = 368;
 const SPLAT_SCALE = 0.5;
 const MAX_POINTERS = 8;
 
@@ -71,6 +71,12 @@ export const gooToy: Toy = {
       use: 'Browser MLS-MPM reference: fixed-point atomicAdd for P2G in WGSL.',
     },
     {
+      short: 'Glinty NDFs',
+      title: 'Evaluating and Sampling Glinty NDFs in Constant Time (SIGGRAPH Asia 2025)',
+      url: 'https://perso.telecom-paristech.fr/boubek/papers/Glinty/',
+      use: 'Inspiration for the snow and sand glitter: sparse mirror micro-facets that flash as the light moves (here, one hashed facet per grain).',
+    },
+    {
       short: '2MP',
       title: 'Two Minute Papers — This Jello Simulation Uses Only ~88 Lines of Code',
       url: 'https://www.youtube.com/watch?v=9M18rc9-VWU',
@@ -108,6 +114,7 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
     sandFriction: 1.2,
     size: 1.0,
     glow: 0.35,
+    glitter: true,
     maxParticles: 40000,
     resolution: 128,
     pokeSize: 7,
@@ -542,6 +549,7 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
   p.heading('Look');
   p.slider(s, 'size', { label: 'Blob size', min: 0.7, max: 2, step: 0.05 });
   p.slider(s, 'glow', { label: 'Glow', min: 0, max: 1, step: 0.01 });
+  p.toggleSwitch(s, 'glitter', 'Glitter');
   p.slider(s, 'pokeSize', { label: 'Poke size', min: 3, max: 18, step: 0.5 });
   p.heading('Budget');
   p.slider(s, 'maxParticles', {
@@ -623,6 +631,7 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
     pf[85] = s.glow;
     pf[86] = canvasW;
     pf[87] = canvasH;
+    pf[88] = s.glitter ? 1 : 0;
     device.queue.writeBuffer(paramBuf, 0, paramData);
   }
 

@@ -122,6 +122,11 @@ html, body {
   padding: 4px 8px; border-radius: 99px; background: #ffd166; color: #111;
   font: 850 10px/1 ui-rounded, system-ui, sans-serif; letter-spacing: 0.1em; text-transform: uppercase;
 }
+.hero-upd { background: #7cc4ff; }
+.hero-new + .hero-upd { left: auto; right: 12px; }
+/* Updated row: a little shorter than New, and the note gets three lines. */
+.hero-sm { aspect-ratio: 4 / 2.7; }
+.hero-sm .hero-meta small { -webkit-line-clamp: 3; }
 .hero-meta { position: absolute; z-index: 2; left: 14px; right: 12px; bottom: 12px; display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
 .hero-meta b { display: block; font: 750 21px/1.1 ui-rounded, system-ui, sans-serif; letter-spacing: -0.02em; }
 .hero-meta small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 3px; font-size: 13px; line-height: 1.3; color: rgba(255, 255, 255, 0.8); }
@@ -146,6 +151,7 @@ html, body {
 .card-title { display: flex; align-items: center; gap: 6px; margin: 7px 2px 0; font: 650 15px/1.2 ui-rounded, -apple-system, system-ui, sans-serif; letter-spacing: -0.01em; }
 .card-title span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .new-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: #ffd166; }
+.upd-dot { background: #7cc4ff; }
 .card-gpu { margin-left: auto; flex: 0 0 auto; font-size: 9.5px; font-weight: 800; letter-spacing: 0.06em; color: var(--muted); }
 .card.dim { opacity: 0.4; }
 .card:focus-visible .card-media, .hero:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
@@ -179,6 +185,12 @@ html, body {
 .tag { display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border-radius: 99px; background: rgba(255, 255, 255, 0.08); color: #cfcad8; font-size: 12px; font-weight: 650; }
 .tag svg { width: 14px; height: 14px; }
 .tag-new { background: #ffd166; color: #111; }
+.tag-upd { background: #7cc4ff; color: #111; }
+.whats-new { margin: 16px 0 2px; padding: 12px 14px; border-radius: 16px; background: rgba(124, 196, 255, 0.1); box-shadow: inset 0 0 0 0.5px rgba(124, 196, 255, 0.3); }
+.whats-new h4 { margin: 0 0 6px; font: 750 14px/1.2 ui-rounded, system-ui, sans-serif; color: #a9d8ff; }
+.whats-new ul { margin: 0; padding: 0; list-style: none; }
+.whats-new li { display: flex; gap: 10px; margin: 7px 0 0; font-size: 13.5px; line-height: 1.35; color: #d9d4e0; }
+.whats-new time { flex: 0 0 44px; font-weight: 700; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .cta {
   width: 100%; height: 52px; border: 0; border-radius: 16px;
   display: flex; align-items: center; justify-content: center; gap: 8px;

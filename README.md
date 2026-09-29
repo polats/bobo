@@ -2,33 +2,38 @@
 
 ![bobo — physics toys you can poke](docs/media/bobo-cover.gif)
 
-A physics sandbox for playing with novel, satisfying, performant simulations — liquid, particles, cloth, soft bodies, sand — tuned for juicy visual effects.
+A physics sandbox of 18 small toys built on novel, satisfying, performant simulations (liquid, particles, cloth, yarn, soft bodies, sand, dirt), tuned for juicy visuals and sound. It runs in the browser and as an iOS and Android app.
 
 ## Toys
+
+Grouped by the hub's shelves.
 
 | Toy | What it is | Tech |
 |---|---|---|
 | **Ink Swirl** | Finger-paint glowing fluid; tap to burst, flick to swirl. *Paint* mode mixes colours like real pigment. | Stable Fluids on WebGL2 (`src/toys/ink`) |
-| **Goo Lab** | Pour water, jelly, snow and sand that all interact; poke and squish them. | 2D MLS-MPM on WebGPU compute (`src/toys/goo`) |
-| **Alchemy Sandbox** | Falling-sand chemistry: fire, water, lava, acid, plants, ice, gunpowder and more react with each other. | Cellular automaton on CPU + WebGL2 glow (`src/toys/sand`) |
 | **Ripple Pool** | Poke a sunlit pool, watch caustics dance, grab and fling rubber ducks, make it rain. | Height-field waves + mesh caustics on WebGL2 (`src/toys/pool`) |
 | **Splash Tank** | A glass tank of 3D water: tilt the phone (or drag) to slosh it, poke it, drop beach balls, make a big splash. | 3D MLS-MPM + screen-space fluid rendering on WebGPU (`src/toys/splash`) |
-| **Tear Sheet** | Pull a velvet curtain until it rips, slash it with a swipe, throw balls into a flag or a hammock. | XPBD cloth on CPU + WebGL2 (`src/toys/cloth`) |
-| **Pull the Thread** | Grab the loose end of a chunky knit and unravel it stitch by stitch, row by row, into a pile of crinkly yarn. | Stitch grid over XPBD cloth + XPBD yarn strand on WebGL2 (`src/toys/thread`) |
-| **Campfire** | Stack logs, strike a match, blow on the embers; fire climbs the wood, chars it, and hisses when doused. | Stable-fluids fire (heat, smoke, buoyancy) + CPU burning cells on WebGL2 (`src/toys/fire`) |
+| **Campfire** | Stack logs, strike a match, blow on the embers; fire climbs the wood, chars it, and hisses when doused. An oxygen field feeds it: drop a glass jar over the flames and they choke to embers, then lift it for a whoosh of flame. | Stable-fluids fire (heat, smoke, buoyancy) + CPU burning and oxygen cells on WebGL2 (`src/toys/fire`) |
+| **Ferro Blob** | Drag a magnet under a dish of black ferrofluid: it crawls after you and bristles with spikes; two fingers split it, taps drop droplets. | Double-density particle liquid + Rosensweig spike lattice + chrome shading on WebGL2 (`src/toys/ferro`) |
+| **Goo Lab** | Pour water, jelly, snow and sand that all interact; poke and squish them. Snow and sand glitter as grains tumble. | 2D MLS-MPM on WebGPU compute, per-grain glints (`src/toys/goo`) |
 | **Jelly Stack** | Tap to drop gummy cubes, stars, hearts and a smiling Bobo; stack them, grab and fling, slap the tower over. | Shape-matching soft bodies + PBD contacts on WebGL2 (`src/toys/jelly`) |
+| **Jelly Merge** | Suika with gummies: drop jelly fruit into a jar; matching sizes smoosh together and pop into a bigger one (hit-stop, shockwave, combo pitch), all the way to a giant Bobo. | Jelly Stack's shape matching + merge rules on WebGL2 (`src/toys/merge`) |
+| **Tear Sheet** | Pull a velvet curtain until it rips, slash it with a swipe, throw balls into a flag or a hammock. | XPBD cloth on CPU + WebGL2 (`src/toys/cloth`) |
+| **Laundry Line** | Washing pegged to a sagging line: swipe for gusts, hold for a storm; pegs pop and laundry blows away. | XPBD cloth + rope on CPU + WebGL2 (`src/toys/laundry`) |
+| **Pull the Thread** | Grab the loose end of a chunky knit and unravel it stitch by stitch, row by row, into a pile of crinkly yarn. | Stitch grid over XPBD cloth + XPBD yarn strand on WebGL2 (`src/toys/thread`) |
+| **Spool Sort** | Tap a spool and it reels its colour out of a knitted picture from the bottom up; stitches tug and sag, and anything cut loose drops away. | Mass-spring knit + verlet yarn on Canvas 2D (`src/toys/spool`) |
+| **Alchemy Sandbox** | Falling-sand chemistry: fire, water, lava, acid, plants, ice, gunpowder and more react with each other. | Cellular automaton on CPU + WebGL2 glow (`src/toys/sand`) |
+| **Dig Down** | Scoop down through a backyard: soil holds until you undercut it, then caves in; clay holds tunnels, sand runs, water pockets drain, rock needs chipping. Dig up 12 buried finds for your shelf. | Falling-sand CA with span-based cohesion on Canvas 2D (`src/toys/dig`) |
+| **Demolition Tower** | Swing a wrecking ball, drop bombs or flick cannonballs into brick towers, pyramids and castles; blocks shatter into debris and dust. Rubble has rolling resistance and settles, and tall stacks stand still. | Pure-TS 2D rigid bodies (Box2D v3-style soft step, rolling resistance, shock propagation, island waking) + WebGL2 (`src/toys/demolition`) |
 | **Marbling Tray** | Drop inks on a bath, drag combs, rakes and a stylus into feathered ebru patterns, then lay paper to keep a print. | Mixwell analytic marbling brushes (SIGGRAPH 2026 Best Paper) on WebGL2 (`src/toys/marble`) |
-| **Jelly Merge** | Suika with gummies: drop jelly fruit into a jar; matching sizes squish into a bigger one, all the way to a giant Bobo. | Jelly Stack's shape matching + merge rules on WebGL2 (`src/toys/merge`) |
 | **Power Rinse** | Blast a mud-caked Bobo statue, duck, gnome or mosaic clean; a "% clean" ring fills and hidden details appear. | Erodible mud and moss layers, runoff and spray on WebGL2 (`src/toys/rinse`) |
 | **Sand Jar** | Pour coloured sand through a funnel into a bottle, poke scallops, tilt the strata; or pour matching colours to reveal a hidden picture. | Sand-only falling-sand CA with picture targets on WebGL2 (`src/toys/sandjar`) |
-| **Spool Sort** | Tap a spool and it reels its colour out of a knitted picture from the bottom up; stitches tug and sag, and anything cut loose drops away. | Mass-spring knit + verlet yarn on Canvas 2D (`src/toys/spool`) |
-| **Demolition Tower** | Swing a wrecking ball, drop bombs or flick cannonballs into brick towers, pyramids and castles; blocks shatter into debris and dust. | Pure-TS 2D rigid bodies (Box2D v3-style soft step, sleeping) + WebGL2 (`src/toys/demolition`) |
-| **Ferro Blob** | Drag a magnet under a dish of black ferrofluid: it crawls after you and bristles with spikes; two fingers split it, taps drop droplets. | Double-density particle liquid + Rosensweig spike lattice + chrome shading on WebGL2 (`src/toys/ferro`) |
-| **Laundry Line** | Washing pegged to a sagging line: swipe for gusts, hold for a storm; pegs pop and laundry blows away. | XPBD cloth + rope on CPU + WebGL2 (`src/toys/laundry`) |
 
-The hub shows each toy as a live preview card; tap one for its sheet (description, papers, Play). Every toy has a **Tune** panel (top right) with live sliders, a **Based on** list linking the papers and reference code it uses, and an FPS readout (top centre).
+The hub shows each toy as a live preview card, with **New** and **Updated** rows up top (updated toys show what changed right on the card). Tap a toy for its sheet: description, a dated **What's new** list, papers and Play. Swipe the sheet down to dismiss it. Updates are logged in [`src/shell/catalog.ts`](src/shell/catalog.ts). Sort by newest, A–Z or shelf. Every toy has a **Tune** panel (top right) with live sliders, a **Based on** list linking the papers and reference code it uses, a **Clip** button that records 8 s to share, a sound toggle, and an FPS readout (top centre).
 
-Play it: https://bobo-ashy-ten.vercel.app (redeploys on every push to `main`).
+**Sound.** Every toy has procedural sound: [`src/shell/sound.ts`](src/shell/sound.ts) synthesises 14 one-shot voices (pop, squish, boing, thud, knock, tick, snap, rip, splash, whoosh, crumble, sizzle, chime, plop) and 5 filtered loops (hiss, rumble, trickle, crackle, bubble) with Web Audio, so there are no audio files. Toys drive pitch, loudness and stereo position from the physics, such as impact strength, body size, pour rate or stir speed. Haptics fire alongside on iOS and Android.
+
+Play it: https://bobo-ashy-ten.vercel.app. Deploys are manual for now: `npx vercel deploy --prod --archive=tgz` (auto-deploy stopped when the repo moved to ai-asylum).
 
 ## Gallery
 
@@ -36,16 +41,18 @@ Play it: https://bobo-ashy-ten.vercel.app (redeploys on every push to `main`).
 |:-:|:-:|:-:|:-:|
 | ![Ink Swirl](docs/media/ink.gif)<br>**Ink Swirl** | ![Goo Lab](docs/media/goo.gif)<br>**Goo Lab** | ![Alchemy Sandbox](docs/media/sand.gif)<br>**Alchemy Sandbox** | ![Ripple Pool](docs/media/pool.gif)<br>**Ripple Pool** |
 | ![Splash Tank](docs/media/splash.gif)<br>**Splash Tank** | ![Tear Sheet](docs/media/cloth.gif)<br>**Tear Sheet** | ![Laundry Line](docs/media/laundry.gif)<br>**Laundry Line** | ![Pull the Thread](docs/media/thread.gif)<br>**Pull the Thread** |
+| ![Campfire](docs/media/fire.gif)<br>**Campfire** | ![Jelly Stack](docs/media/jelly.gif)<br>**Jelly Stack** | ![Demolition Tower](docs/media/demolition.gif)<br>**Demolition Tower** | ![Ferro Blob](docs/media/ferro.gif)<br>**Ferro Blob** |
+| ![Marbling Tray](docs/media/marble.gif)<br>**Marbling Tray** | ![Jelly Merge](docs/media/merge.gif)<br>**Jelly Merge** | ![Power Rinse](docs/media/rinse.gif)<br>**Power Rinse** | ![Sand Jar](docs/media/sandjar.gif)<br>**Sand Jar** |
+| ![Spool Sort](docs/media/spool.gif)<br>**Spool Sort** | ![Dig Down](docs/media/dig.gif)<br>**Dig Down** |  |  |
 
 Captured in headless Chrome with [`tools/media`](tools/media).
 
 ## Roadmap
 
-Next up, from [docs/research/cloth-knitting.md](docs/research/cloth-knitting.md) and [docs/research/shear-knit.md](docs/research/shear-knit.md):
+Next up, from [docs/research/2026-directions.md](docs/research/2026-directions.md), [cloth-knitting.md](docs/research/cloth-knitting.md) and [shear-knit.md](docs/research/shear-knit.md):
 
 | Next | What | Builds on |
 |---|---|---|
-| **Dig Down** | Scoop a backyard cross-section; soil holds until undercut, then crumbles; dig up finds for a shelf | Sand CA + Demolition's rigid bodies · [2026-directions.md](docs/research/2026-directions.md) |
 | **Continuous haptics** | A native Core Haptics bridge for load-driven vibration that follows the procedural sound layer | [shear-knit.md §2](docs/research/shear-knit.md) · [Core Haptics](https://developer.apple.com/documentation/corehaptics) |
 | **Shear** | Clip the fleece off a sheep with shell fur and cut maps; the fleece peels off in one piece | Tear Sheet cutting, Laundry Line pins · [Lengyel et al. 2001](https://hhoppe.com/proj/fur/) |
 | **Rope & yarn ball** | Ropes, chains and a yarn ball that unspools and tangles as a cat bats it | Pull the Thread's yarn · [Cosserat rods](https://animation.rwth-aachen.de/publication/0550/) |
@@ -86,14 +93,20 @@ npm run mobile:ios           # build only → mobile/out/ios/Build/Products/Debu
 ## Layout
 
 ```
-src/main.ts            hub + toy host (frame loop, FPS, resize, haptics)
-src/shell/             hub, panel (sliders), multi-touch pointers, procedural sound (sound.ts), shared styles, Toy interface
-src/toys/<toy>/        one folder per toy; export a `Toy` from index.ts and add it to main.ts
-mobile/build-ios.mjs   Capacitor iOS build/install
+src/main.ts            toy host: frame loop, FPS, resize, haptics, clip recorder, celebrate
+src/shell/hub.ts       the hub: preview cards, New carousel, sort/shelf filter, toy sheets
+src/shell/catalog.ts   when each toy shipped and which shelf it sits on
+src/shell/sound.ts     procedural Web Audio voices and loops
+src/shell/             also the Tune panel, multi-touch pointers, icons, shared styles, the Toy interface
+src/toys/<toy>/        one folder per toy: export a `Toy` from index.ts and add a catalog.ts line; the hub finds it
+src/previews/          3 s hub preview loops (.mp4 + .webp poster), made by tools/media
+tools/media/           headless capture → hub previews, README GIFs and the cover
+mobile/                Capacitor iOS and Android build, install and FPS soak scripts
 ```
 
 ## Docs
 
+- [docs/research/2026-tech.md](docs/research/2026-tech.md), [2026-scene.md](docs/research/2026-scene.md), [2026-directions.md](docs/research/2026-directions.md) — autumn 2026 graphics/physics research, the games scene, and the toy picks they led to (waves 1 and 2)
 - [docs/research/physics.md](docs/research/physics.md) — survey of real-time physics simulation techniques (Two Minute Papers, Ten Minute Physics, SIGGRAPH, etc.) and a backlog of sandbox toys to build
 - [docs/research/cloth-knitting.md](docs/research/cloth-knitting.md) — cloth, yarn and knitting simulation: techniques, yarn-level research and how to fake it, browser playgrounds, and ten cloth/knit toy ideas (e.g. unravel a sweater)
 - [docs/research/hub-design.md](docs/research/hub-design.md) — mobile catalog design (HIG / Material 3), preview video formats and playback budgets behind the hub

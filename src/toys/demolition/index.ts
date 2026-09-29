@@ -29,6 +29,12 @@ export const demolitionToy: Toy = {
       url: 'https://github.com/erincatto/box2d-lite',
       use: 'Box–box contact manifolds: separating-axis test, incident edge clipping and feature IDs.',
     },
+    {
+      short: 'Box2D 3.1',
+      title: 'Erin Catto — Box2D 3.1 (2025)',
+      url: 'https://box2d.org/posts/2025/04/box2d-3.1/',
+      use: 'Rolling resistance: a friction-like torque on round shapes, so cannonballs and rubble come to rest.',
+    },
   ],
   async create(ctx) {
     return new Demolition(ctx);

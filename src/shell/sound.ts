@@ -72,10 +72,21 @@ const LEVEL: Record<Voice, number> = {
 
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
-let noise: AudioBuffer | null = null;
-let crackle: AudioBuffer | null = null;
-let trickle: AudioBuffer | null = null;
-let bubble: AudioBuffer | null = null;
+// Source buffers are built the first time something needs them, not all at unlock: generating
+// them costs a few tens of milliseconds, which would stall the first tap.
+const buffers = new Map<string, AudioBuffer>();
+function buffer(kind: 'noise' | 'crackle' | 'trickle' | 'bubble') {
+  let b = buffers.get(kind);
+  if (b || !ctx) return b ?? null;
+  const sr = ctx.sampleRate;
+  if (kind === 'noise') b = makeBuffer(ctx, sr, () => Math.random() * 2 - 1);
+  // Sparse impulse trains: crackling fire, trickling grains, bubbling liquid.
+  else if (kind === 'crackle') b = makeBuffer(ctx, 2 * sr, () => (Math.random() < 30 / sr ? (Math.random() * 2 - 1) * (0.5 + Math.random()) : 0) + (Math.random() * 2 - 1) * 0.02);
+  else if (kind === 'trickle') b = makeGrains(ctx, 2 * sr, 260, 0.0015);
+  else b = makeBubbles(ctx, 2 * sr);
+  buffers.set(kind, b);
+  return b;
+}
 let active = 0;
 const lastPlay = new Map<Voice, number>();
 let enabled = readPref();
@@ -130,12 +141,6 @@ function audio(): AudioContext | null {
   master = ctx.createGain();
   master.gain.value = enabled ? 0.8 : 0;
   master.connect(comp).connect(ctx.destination);
-  const sr = ctx.sampleRate;
-  noise = makeBuffer(ctx, 2 * sr, () => Math.random() * 2 - 1);
-  // Sparse impulse trains: crackling fire, trickling grains, bubbling liquid.
-  crackle = makeBuffer(ctx, 2 * sr, () => (Math.random() < 30 / sr ? (Math.random() * 2 - 1) * (0.5 + Math.random()) : 0) + (Math.random() * 2 - 1) * 0.02);
-  trickle = makeGrains(ctx, 2 * sr, 260, 0.0015);
-  bubble = makeBubbles(ctx, 2 * sr);
   return ctx;
 }
 
@@ -216,7 +221,7 @@ export const sound: Sound = {
     const c = audio();
     if (!c || !master) return { set() {}, stop() {} };
     const src = c.createBufferSource();
-    src.buffer = kind === 'crackle' ? crackle : kind === 'trickle' ? trickle : kind === 'bubble' ? bubble : noise;
+    src.buffer = buffer(kind === 'crackle' || kind === 'trickle' || kind === 'bubble' ? kind : 'noise');
     src.loop = true;
     // Start somewhere random so two loops of the same kind don't phase.
     const filter = c.createBiquadFilter();
@@ -227,7 +232,7 @@ export const sound: Sound = {
     filter.Q.value = cfg.q;
     filter.frequency.value = cfg.lo;
     src.connect(filter).connect(g).connect(master);
-    src.start(0, Math.random() * 1.5);
+    src.start(0, Math.random() * 0.8);
     let stopped = false;
     return {
       set(level, brightness = 0.5) {
@@ -280,7 +285,7 @@ function osc(c: AudioContext, type: OscillatorType, f0: number, f1: number, t: n
 
 function burst(c: AudioContext, t: number, dur: number, out: AudioNode, peak: number, type: BiquadFilterType, f0: number, f1: number, q = 1, attack = 0.002) {
   const s = c.createBufferSource();
-  s.buffer = noise;
+  s.buffer = buffer('noise');
   const f = c.createBiquadFilter();
   f.type = type;
   f.Q.value = q;
@@ -289,7 +294,7 @@ function burst(c: AudioContext, t: number, dur: number, out: AudioNode, peak: nu
   const g = c.createGain();
   env(g.gain, t, peak, attack, dur);
   s.connect(f).connect(g).connect(out);
-  s.start(t, Math.random() * 1.5);
+  s.start(t, Math.random() * 0.8);
   s.stop(t + attack + dur + 0.02);
 }
 
@@ -376,7 +381,7 @@ const VOICES: Record<Voice, Synth> = {
   },
   whoosh(c, out, t, p) {
     const s = c.createBufferSource();
-    s.buffer = noise;
+    s.buffer = buffer('noise');
     const f = c.createBiquadFilter();
     f.type = 'bandpass';
     f.Q.value = 1.2;

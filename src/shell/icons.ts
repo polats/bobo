@@ -40,6 +40,8 @@ const ICONS: Record<string, string> = {
 
 // Spool Sort: a wooden spool wound with yarn, loose end trailing.
 ICONS.spool = svg('<rect x="6" y="3.5" width="12" height="2.5" rx="1"/><rect x="6" y="18" width="12" height="2.5" rx="1"/><path d="M8 6v12M16 6v12"/><path d="m8 9 8-1.5M8 12l8-1.5M8 15l8-1.5"/><path d="M16 13.5c2.5.5 4 2.2 4 4.5"/>');
+// Dig Down: a shovel in a mound of dirt.
+ICONS.dig = svg('<path d="M3 20.5h18"/><path d="M5 20.5c1.2-3 3.6-4.5 7-4.5s5.8 1.5 7 4.5"/><path d="M14.5 3.5 11 12"/><path d="m9.2 10.8 3.9 1.6-1.4 3.2c-.4.9-1.4 1.3-2.3.9l-.6-.2c-.9-.4-1.3-1.4-.9-2.3Z"/><path d="M13.3 3.1l2.6 1"/>');
 
 const FALLBACK = svg('<circle cx="12" cy="12" r="7"/><path d="M12 8v4l2.5 2.5"/>');
 

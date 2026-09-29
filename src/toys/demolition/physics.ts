@@ -2,6 +2,11 @@
 // contacts are collided once per frame, then solved over a few substeps with soft constraints,
 // a relax pass without bias, warm starting from last frame, and per-body sleeping.
 // Box-box contact manifolds follow Box2D Lite's SAT + clipping, with a speculative margin.
+// Additions for rubble and tall stacks: Box2D 3.1 style rolling resistance (a torque at each contact
+// capped by the normal load, so balls and chips stop rolling); a shock-propagation pass after each
+// relax, run bottom-up through the contact graph with the lower body of each pair made heavier, so
+// towers settle without jitter even at low substep counts; and island waking, so a hard hit on a
+// sleeping building wakes all of it before the solve instead of bouncing off frozen bricks.
 
 export const enum Shape {
   Box = 0,
@@ -34,6 +39,8 @@ export interface Body {
   invI: number;
   mass: number;
   friction: number;
+  /** Rolling resistance coefficient (Box2D 3.1): the resisting torque is this × radius × normal force. */
+  rolling: number;
   sleeping: boolean;
   sleepTime: number;
   // Pose at collide time, for per-substep separation updates.
@@ -48,6 +55,8 @@ export interface Body {
   alive: boolean;
   /** Seconds since spawn; fresh fracture pieces can't re-break immediately. */
   age: number;
+  /** Contact hops from something still (ground or a sleeper) this frame, for shock propagation. */
+  depth: number;
 }
 
 interface Point {
@@ -61,6 +70,9 @@ interface Point {
   tImp: number;
   nMass: number;
   tMass: number;
+  /** Normal and tangent masses for the shock pass. */
+  nMassS: number;
+  tMassS: number;
   maxImp: number;
   px: number;
   py: number;
@@ -79,6 +91,14 @@ export interface Manifold {
   mB: number;
   iB: number;
   static: boolean;
+  /** Resisting torque per unit normal impulse (m), its angular mass and accumulated impulse. */
+  rolling: number;
+  rollMass: number;
+  rollImp: number;
+  /** Which body sits lower in the contact graph (1 = a, 2 = b, 0 = level), and that depth. */
+  lower: number;
+  depth: number;
+  rollMassS: number;
 }
 
 export interface Rope {
@@ -114,6 +134,11 @@ const SLEEP_ANG = 0.08;
 const SLEEP_TIME = 0.5;
 const MAX_SPEED = 80;
 const CELL = 1.25;
+/** Closing speed at which a touch wakes the whole sleeping pile, not just the body touched. */
+const WAKE_HIT = 1;
+/** Shock pass: inverse-mass scale of the lower body. 0 would be classic shock propagation (lower
+ * body immovable), but with one pass that feeds rocking up the stack; half weight keeps it stable. */
+const SHOCK_SCALE = 0.5;
 
 interface Softness {
   biasRate: number;
@@ -140,12 +165,16 @@ export class World {
   contactHertz = 60;
   contactZeta = 10;
   pushMax = 3;
+  /** Shock propagation: the lower body's share of each correction in the bottom-up pass (1 = off). */
+  shockScale = SHOCK_SCALE;
   breakSpeed = 7;
   maxBodies = 650;
   private nextId = 1;
   /** Bodies whose velocity jumped past breakSpeed this frame (excluding gravity). */
   broken: Body[] = [];
   impacts: Impact[] = [];
+  /** This frame's active contacts, ordered bottom-up through the contact graph. */
+  private upward: Manifold[] = [];
 
   add(b: Partial<Body> & { shape: Shape; density?: number }): Body {
     const body: Body = {
@@ -167,6 +196,7 @@ export class World {
       invI: 0,
       mass: 0,
       friction: b.friction ?? 0.6,
+      rolling: b.rolling ?? (b.shape === Shape.Circle ? 0.15 : 0.05),
       sleeping: b.sleeping ?? false,
       sleepTime: 0,
       x0: 0,
@@ -178,6 +208,7 @@ export class World {
       breakable: b.breakable ?? false,
       alive: true,
       age: 0,
+      depth: 0,
     };
     body.c = Math.cos(body.a);
     body.s = Math.sin(body.a);
@@ -247,6 +278,7 @@ export class World {
     for (const r of this.ropes) this.wake(r.body);
     this.collide();
     const active = this.prepare();
+    const shock = this.shockScale < 1;
 
     const n = this.substeps;
     const h = dt / n;
@@ -282,6 +314,7 @@ export class World {
         b.s = Math.sin(b.a);
       }
       this.solveContacts(active, inv_h, soft, softStatic, false);
+      if (shock) this.solveContacts(this.upward, inv_h, soft, softStatic, false, true);
       this.solveJoints(h, jointSoft, mouseSoft, false);
     }
     this.finish(dt, active);
@@ -299,8 +332,7 @@ export class World {
         statics.push(b);
         continue;
       }
-      const e = b.shape === Shape.Circle ? b.r : Math.abs(b.hx * b.c) + Math.abs(b.hy * b.s);
-      const f = b.shape === Shape.Circle ? b.r : Math.abs(b.hx * b.s) + Math.abs(b.hy * b.c);
+      const e = extentX(b), f = extentY(b);
       const i0 = Math.floor((b.x - e - MARGIN) / CELL), i1 = Math.floor((b.x + e + MARGIN) / CELL);
       const j0 = Math.floor((b.y - f - MARGIN) / CELL), j1 = Math.floor((b.y + f + MARGIN) / CELL);
       for (let i = i0; i <= i1; i++)
@@ -311,6 +343,27 @@ export class World {
           cell.push(b);
         }
     }
+    // Wake a sleeper and every sleeper touching it, transitively (Box2D wakes whole islands).
+    // Sleeper pairs may have no manifold yet, so touching is judged from the boxes' bounds.
+    let woke = false;
+    const wakePile = (start: Body) => {
+      const stack = [start];
+      this.wake(start);
+      woke = true;
+      while (stack.length) {
+        const x = stack.pop()!;
+        const e = extentX(x) + MARGIN, f = extentY(x) + MARGIN;
+        const i0 = Math.floor((x.x - e) / CELL), i1 = Math.floor((x.x + e) / CELL);
+        const j0 = Math.floor((x.y - f) / CELL), j1 = Math.floor((x.y + f) / CELL);
+        for (let i = i0; i <= i1; i++)
+          for (let j = j0; j <= j1; j++)
+            for (const y of grid.get(key(i, j)) ?? []) {
+              if (!y.sleeping || Math.abs(y.x - x.x) > e + extentX(y) || Math.abs(y.y - x.y) > f + extentY(y)) continue;
+              this.wake(y);
+              stack.push(y);
+            }
+      }
+    };
     const old = this.manifolds;
     const next = new Map<number, Manifold>();
     const consider = (a: Body, b: Body) => {
@@ -328,7 +381,12 @@ export class World {
       const m = collidePair(a, b);
       if (!m) return;
       m.key = k;
+      // A hard hit on a sleeper wakes its whole pile now, before the solve, so the blow meets
+      // live bodies instead of bouncing off a frozen building.
+      const sleeper = a.sleeping ? a : b.sleeping ? b : null;
+      if (sleeper && closingSpeed(m) > WAKE_HIT) wakePile(sleeper);
       if (prev) {
+        m.rollImp = prev.rollImp;
         for (const p of m.points)
           for (const q of prev.points)
             if (q.id === p.id) {
@@ -339,17 +397,25 @@ export class World {
       }
       next.set(k, m);
     };
-    for (const cell of grid.values()) {
-      for (let i = 0; i < cell.length; i++) for (let j = i + 1; j < cell.length; j++) consider(cell[i], cell[j]);
-    }
-    // Statics (the ground) against every movable body near them.
-    for (const st of statics)
-      for (const b of bodies) {
-        if (!b.alive || b.kind === Kind.Static) continue;
-        const ext = Math.max(b.hx, b.hy, b.r) * 1.5;
-        if (b.y - ext > st.y + st.hy + MARGIN) continue;
-        consider(st, b);
+    const pairs = () => {
+      for (const cell of grid.values()) {
+        for (let i = 0; i < cell.length; i++) for (let j = i + 1; j < cell.length; j++) consider(cell[i], cell[j]);
       }
+      // Statics (the ground) against every movable body near them.
+      for (const st of statics)
+        for (const b of bodies) {
+          if (!b.alive || b.kind === Kind.Static) continue;
+          const ext = Math.max(b.hx, b.hy, b.r) * 1.5;
+          if (b.y - ext > st.y + st.hy + MARGIN) continue;
+          consider(st, b);
+        }
+    };
+    pairs();
+    // Pairs skipped earlier as asleep may just have woken: sweep again for their manifolds.
+    for (let i = 0; woke && i < 3; i++) {
+      woke = false;
+      pairs();
+    }
     // A sleeper whose contact vanished has lost its support: wake it.
     for (const [k, m] of old) {
       if (next.has(k)) continue;
@@ -361,6 +427,8 @@ export class World {
 
   private prepare(): Manifold[] {
     const active: Manifold[] = [];
+    const FAR = 1e9;
+    for (const b of this.bodies) b.depth = b.sleeping || b.invMass === 0 ? 0 : FAR;
     for (const m of this.manifolds.values()) {
       const a = m.a, b = m.b;
       const aStill = a.sleeping || a.invMass === 0;
@@ -371,6 +439,8 @@ export class World {
       m.mB = bStill ? 0 : b.invMass;
       m.iB = bStill ? 0 : b.invI;
       m.static = aStill || bStill;
+      const ki = m.iA + m.iB;
+      m.rollMass = ki > 0 ? 1 / ki : 0;
       const nx = m.nx, ny = m.ny, tx = ny, ty = -nx;
       for (const p of m.points) {
         const rnA = p.rAx * ny - p.rAy * nx;
@@ -385,6 +455,52 @@ export class World {
       }
       active.push(m);
     }
+    // Contact-graph depth from whatever is still: relax over the pairs until nothing shortens.
+    // Towers are a few dozen hops deep, so this is a handful of cheap sweeps.
+    for (let sweep = 0, changed = true; changed && sweep < 96; sweep++) {
+      changed = false;
+      for (const m of active) {
+        const a = m.a, b = m.b;
+        if (a.depth + 1 < b.depth) {
+          b.depth = a.depth + 1;
+          changed = true;
+        } else if (b.depth + 1 < a.depth) {
+          a.depth = b.depth + 1;
+          changed = true;
+        }
+      }
+    }
+    // Masses for the shock pass, where the lower body of each pair takes only part of the correction.
+    const k = this.shockScale;
+    for (const m of active) {
+      const da = m.a.depth, db = m.b.depth;
+      m.depth = Math.min(da, db);
+      m.lower = da < db ? 1 : db < da ? 2 : 0;
+      const ka = m.lower === 1 ? k : 1, kb = m.lower === 2 ? k : 1;
+      const mA = m.mA * ka, iA = m.iA * ka, mB = m.mB * kb, iB = m.iB * kb;
+      const ki = iA + iB;
+      m.rollMassS = ki > 0 ? 1 / ki : 0;
+      const nx = m.nx, ny = m.ny, tx = ny, ty = -nx;
+      for (const p of m.points) {
+        if (!m.lower) {
+          p.nMassS = p.nMass;
+          p.tMassS = p.tMass;
+          continue;
+        }
+        const rnA = p.rAx * ny - p.rAy * nx;
+        const rnB = p.rBx * ny - p.rBy * nx;
+        const kn = mA + mB + iA * rnA * rnA + iB * rnB * rnB;
+        p.nMassS = kn > 0 ? 1 / kn : 0;
+        const rtA = p.rAx * ty - p.rAy * tx;
+        const rtB = p.rBx * ty - p.rBy * tx;
+        const kt = mA + mB + iA * rtA * rtA + iB * rtB * rtB;
+        p.tMassS = kt > 0 ? 1 / kt : 0;
+      }
+    }
+    const up = this.upward;
+    up.length = 0;
+    for (const m of active) up.push(m);
+    up.sort((p, q) => p.depth - q.depth);
     return active;
   }
 
@@ -402,13 +518,22 @@ export class World {
         b.vy += m.mB * Py;
         b.w += m.iB * (p.rBx * Py - p.rBy * Px);
       }
+      a.w -= m.iA * m.rollImp;
+      b.w += m.iB * m.rollImp;
     }
   }
 
-  private solveContacts(active: Manifold[], inv_h: number, soft: Softness, softStatic: Softness, useBias: boolean) {
+  /**
+   * One Gauss-Seidel pass over the contacts. `shock` is the shock-propagation pass: run bottom-up
+   * with the lower body of each pair (nearer the ground in the contact graph) made heavier, so
+   * support travels up a tall stack in one sweep and upper bodies barely push their base around.
+   */
+  private solveContacts(active: Manifold[], inv_h: number, soft: Softness, softStatic: Softness, useBias: boolean, shock = false) {
+    const k = this.shockScale;
     for (const m of active) {
       const a = m.a, b = m.b;
-      const mA = m.mA, iA = m.iA, mB = m.mB, iB = m.iB;
+      const ka = shock && m.lower === 1 ? k : 1, kb = shock && m.lower === 2 ? k : 1;
+      const mA = m.mA * ka, iA = m.iA * ka, mB = m.mB * kb, iB = m.iB * kb;
       const nx = m.nx, ny = m.ny, tx = ny, ty = -nx;
       const sf = m.static ? softStatic : soft;
       // Pose change since collide, for the current separation.
@@ -432,7 +557,7 @@ export class World {
         const dvx = vBx - wB * p.rBy - (vAx - wA * p.rAy);
         const dvy = vBy + wB * p.rBx - (vAy + wA * p.rAx);
         const vn = dvx * nx + dvy * ny;
-        let imp = -p.nMass * massScale * (vn + bias) - impulseScale * p.nImp;
+        let imp = -(shock ? p.nMassS : p.nMass) * massScale * (vn + bias) - impulseScale * p.nImp;
         const newImp = Math.max(p.nImp + imp, 0);
         imp = newImp - p.nImp;
         p.nImp = newImp;
@@ -446,13 +571,21 @@ export class World {
         vBy += mB * Py;
         wB += iB * (p.rBx * Py - p.rBy * Px);
       }
-      void totalN;
+      // Rolling resistance: oppose relative spin with a torque capped by the normal load.
+      if (m.rolling > 0) {
+        const maxR = m.rolling * totalN;
+        const old = m.rollImp;
+        m.rollImp = Math.max(-maxR, Math.min(maxR, old - (shock ? m.rollMassS : m.rollMass) * (wB - wA)));
+        const d = m.rollImp - old;
+        wA -= iA * d;
+        wB += iB * d;
+      }
       const mu = m.friction;
       for (const p of m.points) {
         const dvx = vBx - wB * p.rBy - (vAx - wA * p.rAy);
         const dvy = vBy + wB * p.rBx - (vAy + wA * p.rAx);
         const vt = dvx * tx + dvy * ty;
-        let imp = -p.tMass * vt;
+        let imp = -(shock ? p.tMassS : p.tMass) * vt;
         const maxF = mu * p.nImp;
         const newImp = Math.max(-maxF, Math.min(p.tImp + imp, maxF));
         imp = newImp - p.tImp;
@@ -592,15 +725,50 @@ function collidePair(a: Body, b: Body): Manifold | null {
   return boxCircle(b, a, true);
 }
 
+const extentX = (b: Body) => (b.shape === Shape.Circle ? b.r : Math.abs(b.hx * b.c) + Math.abs(b.hy * b.s));
+const extentY = (b: Body) => (b.shape === Shape.Circle ? b.r : Math.abs(b.hx * b.s) + Math.abs(b.hy * b.c));
+
+/** Lever arm for rolling resistance: a ball's radius, a box's half thickness; the ground has none. */
+const rollRadius = (b: Body) => (b.kind === Kind.Static ? 0 : b.shape === Shape.Circle ? b.r : Math.min(b.hx, b.hy));
+
 function makeManifold(a: Body, b: Body, nx: number, ny: number): Manifold {
-  return { key: 0, a, b, nx, ny, points: [], friction: Math.sqrt(a.friction * b.friction), mA: 0, iA: 0, mB: 0, iB: 0, static: false };
+  // Box2D 3.1 mixing: the larger coefficient times the larger radius.
+  const rolling = Math.max(a.rolling, b.rolling) * Math.max(rollRadius(a), rollRadius(b));
+  return {
+    key: 0,
+    a,
+    b,
+    nx,
+    ny,
+    points: [],
+    friction: Math.sqrt(a.friction * b.friction),
+    mA: 0,
+    iA: 0,
+    mB: 0,
+    iB: 0,
+    static: false,
+    rolling,
+    rollMass: 0,
+    rollImp: 0,
+    lower: 0,
+    depth: 0,
+    rollMassS: 0,
+  };
+}
+
+/** Approach speed along the normal at the manifold's first point (positive when closing). */
+function closingSpeed(m: Manifold): number {
+  const a = m.a, b = m.b, p = m.points[0];
+  const dvx = b.vx - b.w * p.rBy - (a.vx - a.w * p.rAy);
+  const dvy = b.vy + b.w * p.rBx - (a.vy + a.w * p.rAx);
+  return -(dvx * m.nx + dvy * m.ny);
 }
 
 function addPoint(m: Manifold, px: number, py: number, sep: number, id: number) {
   const a = m.a, b = m.b;
   const rAx = px - a.x, rAy = py - a.y, rBx = px - b.x, rBy = py - b.y;
   const adj = sep - ((rBx - rAx) * m.nx + (rBy - rAy) * m.ny);
-  m.points.push({ id, rAx, rAy, rBx, rBy, adj, nImp: 0, tImp: 0, nMass: 0, tMass: 0, maxImp: 0, px, py });
+  m.points.push({ id, rAx, rAy, rBx, rBy, adj, nImp: 0, tImp: 0, nMass: 0, tMass: 0, nMassS: 0, tMassS: 0, maxImp: 0, px, py });
 }
 
 function circleCircle(a: Body, b: Body): Manifold | null {

@@ -1,4 +1,4 @@
-// Encodes frames/<toy>/ into per-toy GIFs and a 1280x640 collage GIF (8 s loop).
+// Encodes frames/<toy>/ into per-toy GIFs (240×320) and a 1344×768 collage GIF (8 s loop).
 import gifenc from 'gifenc';
 const { GIFEncoder, quantize, applyPalette } = gifenc;
 import jpeg from 'jpeg-js';
@@ -9,8 +9,9 @@ const FPS = Number(process.env.FPS ?? 12.5);
 const SECONDS = 8;
 const N = Math.round(FPS * SECONDS);
 const DELAY = Math.round(1000 / FPS);
-const toys = ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread'];
-const cells = { ink: [2, 0], goo: [3, 0], sand: [4, 0], pool: [0, 1], splash: [1, 1], cloth: [2, 1], laundry: [3, 1], thread: [4, 1] };
+const toys = ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool', 'dig'];
+// 7×3 grid, row-major; the title tile takes the first three cells (see overlay.html).
+const cells = Object.fromEntries(toys.map((t, i) => [t, [(i + 3) % 7, Math.floor((i + 3) / 7)]]));
 mkdirSync('out', { recursive: true });
 
 function pickFrames(toy) {
@@ -81,14 +82,14 @@ function writeGif(path, frames, w, h) {
   return gif.bytes().length;
 }
 
-const W = 1280, H = 640, TW = 256, TH = 320;
+const W = 1344, H = 768, TW = 192, TH = 256, GW = 240, GH = 320;
 const overlay = PNG.sync.read(readFileSync('overlay.png'));
 const collage = Array.from({ length: N }, () => new Uint8Array(W * H * 4));
 for (const toy of toys) {
   const frames = pickFrames(toy);
   const { width: sw, height: sh } = frames[0];
   if (!process.env.COLLAGE_ONLY) {
-    const bytes = writeGif(`out/${toy}.gif`, frames.map((f) => f.data), sw, sh);
+    const bytes = writeGif(`out/${toy}.gif`, frames.map((f) => resize(f.data, sw, sh, GW, GH)), GW, GH);
     console.log(`${toy}.gif ${(bytes / 1e6).toFixed(2)} MB`);
   }
   const [cx, cy] = cells[toy];

@@ -1,5 +1,6 @@
 // Campfire passes on top of Ink Swirl's stable-fluids solver: heat sources, buoyancy, and the
 // night-scene composite (sky, ground lit by the fire, wood, smoke, blackbody flame, embers).
+// The oxygen field (CPU, see burn.ts) arrives as an R8 texture: 0.5 = fresh air, 1 = blown draught.
 
 const head = /* glsl */ `#version 300 es
 precision highp float;
@@ -12,6 +13,15 @@ float noise(vec2 p) {
   f = f * f * (3.0 - 2.0 * f);
   return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
 }
+uniform vec4 jar;   // x, rim y (uv), shown (0/1), seal
+uniform vec2 jarR;  // half-width, height (screen-height units)
+/** Signed distance to the bell jar's glass (negative inside); far away below the rim or with no jar. */
+float jarDist(vec2 uv, float aspect) {
+  vec2 q = vec2((uv.x - jar.x) * aspect, uv.y - jar.y) / jarR;
+  if (jar.z < 0.5 || q.y < 0.0) return 1e3;
+  float d = max(length(q), 1e-4);
+  return (d - 1.0) / (length(q / jarR) / d);
+}
 `;
 
 /** heat texture: r = temperature, g = smoke, b = steam. */
@@ -22,20 +32,36 @@ uniform float dt;
 uniform float time;
 uniform float heatRate;
 uniform float cooling;
-uniform float oxygen;
+uniform float aspect;
+uniform sampler2D uOxy;
 void main() {
   vec3 h = texture(uHeat, vUv).rgb;
   vec4 b = texture(uBurn, vUv);
+  float o = texture(uOxy, vUv).r * 2.0;
+  float air = smoothstep(0.1, 0.8, o), rich = max(0.0, o - 1.0);
   // Flicker: burning cells pulse in time and space, so flames lick instead of glowing flat.
   float flick = 0.55 + 0.9 * noise(vUv * vec2(40.0, 30.0) + vec2(0.0, -time * 6.0));
   float burning = b.g * step(0.02, b.r);
-  h.r += burning * heatRate * flick * (1.0 + oxygen * 1.5) * dt;
-  h.g += burning * (0.35 + 0.4 * (1.0 - oxygen)) * dt * (1.0 - b.a);
+  // Fed flames pour out heat (and roar when blown); starved ones barely lift and smoke instead.
+  h.r += burning * heatRate * flick * (0.2 + 0.8 * air) * (1.0 + rich * 1.8) * dt;
+  float smoulder = step(0.04, b.g) * step(0.02, b.r) * (1.0 - air); // choked wood still fumes
+  h.g += (burning * (0.3 + 1.3 * (1.0 - air)) + smoulder * 0.5) * dt * (1.0 - b.a);
   h.r = min(h.r, 1.6);
   h.r /= 1.0 + cooling * dt;
   h.g /= 1.0 + 0.35 * dt;
   h.b /= 1.0 + 0.9 * dt;
+  if (abs(jarDist(vUv, aspect)) < 0.01) h = vec3(0.0); // nothing passes through the glass
   fragColor = vec4(h, 1.0);
+}`;
+
+/** Glass is a wall for the fluid too: zero the velocity along it after projection. */
+export const jarVelFrag = head + /* glsl */ `
+uniform sampler2D uVelocity;
+uniform float aspect;
+void main() {
+  vec2 v = texture(uVelocity, vUv).xy;
+  if (abs(jarDist(vUv, aspect)) < 0.022) v = vec2(0.0);
+  fragColor = vec4(v, 0.0, 1.0);
 }`;
 
 export const buoyancyFrag = head + /* glsl */ `
@@ -55,6 +81,7 @@ void main() {
 const scene = /* glsl */ `
 uniform sampler2D uHeat;
 uniform sampler2D uBurn;
+uniform sampler2D uOxy;
 uniform vec2 burnTexel;
 uniform float time;
 uniform float groundY;
@@ -74,14 +101,21 @@ vec3 blackbody(float t) {
 /** Emission only (flame + glowing wood), shared by the bloom source and the final composite. */
 vec3 emission(vec2 uv) {
   vec3 h = texture(uHeat, uv).rgb;
-  float t = h.r;
-  vec3 e = blackbody(t) * smoothstep(0.08, 0.6, t) * (0.55 + 0.8 * t);
+  float o = texture(uOxy, uv).r * 2.0;
+  float air = smoothstep(0.1, 0.85, o), rich = max(0.0, o - 1.0);
+  // Starved flames burn cooler (deep orange) and dimmer; a blown-on fire runs hotter and whiter.
+  float t = h.r * (0.72 + 0.28 * air + 0.25 * rich);
+  vec3 e = blackbody(t) * smoothstep(0.08, 0.6, t) * (0.55 + 0.8 * t) * (0.55 + 0.45 * air);
   vec4 b = texture(uBurn, uv);
+  // A lean blue lick right above the wood where air is short: the fire gasping.
+  float base = texture(uBurn, uv - vec2(0.0, burnTexel.y * 3.0)).g * (1.0 - step(0.3, b.r));
+  e += vec3(0.12, 0.28, 1.0) * base * smoothstep(0.6, 0.25, o) * smoothstep(0.02, 0.2, h.r) * 0.7;
   if (b.r > 0.02 || b.b > 0.05) {
     float cracks = noise(uv * vec2(90.0, 60.0) + vec2(time * 0.3, 0.0));
     cracks = smoothstep(0.35, 0.9, cracks) * 0.8 + 0.2;
-    float pulse = 0.75 + 0.25 * sin(time * 3.0 + uv.x * 40.0);
-    e += vec3(1.0, 0.28, 0.04) * b.g * cracks * pulse * 0.55 * smoothstep(0.05, 0.4, b.r + b.b * 0.3);
+    float pulse = 0.75 + 0.25 * sin(time * (3.0 - 2.0 * air) + uv.x * 40.0); // embers breathe slowly
+    float glowing = max(b.g, smoothstep(0.05, 0.14, b.g) * 0.35); // smoulder still glows red
+    e += vec3(1.0, 0.28, 0.04) * glowing * cracks * pulse * 0.55 * smoothstep(0.05, 0.4, b.r + b.b * 0.3);
   }
   return e;
 }
@@ -143,6 +177,21 @@ void main() {
 
   col += emission(uv);
   col += texture(uBloom, uv).rgb * bloomIntensity;
+
+  // The bell jar: faint tinted glass, bright rims where it curves away, a highlight and a knob.
+  float jd = jarDist(uv, aspect);
+  if (jd < 0.02) {
+    float edge = smoothstep(0.012, 0.0, abs(jd)) * 0.5 + smoothstep(0.005, 0.0, abs(jd + 0.003)) * 0.6;
+    vec2 q = vec2((uv.x - jar.x) * aspect, uv.y - jar.y) / jarR;
+    float streak = smoothstep(0.1, 0.0, abs(q.x + 0.55 - q.y * 0.25)) * smoothstep(0.85, 0.2, q.y) * step(jd, 0.0);
+    vec3 glass = vec3(0.55, 0.7, 0.8);
+    if (jd < 0.0) col = col * 0.9 + glass * 0.012 + vec3(0.9, 0.42, 0.16) * glow * 0.04;
+    col += glass * (edge * (0.25 + glow * 0.5) + streak * 0.08);
+  }
+  if (jar.z > 0.5) {
+    vec2 k = vec2((uv.x - jar.x) * aspect, uv.y - jar.y - jarR.y - 0.012);
+    col += vec3(0.55, 0.7, 0.8) * smoothstep(0.016, 0.01, length(k * vec2(1.0, 1.6))) * (0.18 + glow * 0.3);
+  }
   col = aces(col * 1.05);
   col = pow(col, vec3(1.0 / 2.2));
   col += (hash(gl_FragCoord.xy + time) - 0.5) / 255.0;

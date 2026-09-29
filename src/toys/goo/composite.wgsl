@@ -82,7 +82,15 @@ fn compositeFS(@builtin(position) fc: vec4f) -> @location(0) vec4f {
   surface += vec3f(0.35, 0.7, 1.0) * pow(max(wave, 0.0), 6.0) * 0.35 * wet;
   let noise = hash(floor(fc.xy / 1.5));
   surface *= 1.0 + (noise - 0.5) * 0.3 * grain;
-  surface += vec3f(1.0, 0.98, 0.9) * sparkle * 1.6 * step(0.55, noise);
+  if (P.glitter > 0.5) {
+    // b.z is the raw sum of grain glints (see splatFS): sharpen the core, favour slopes facing
+    // the key light, and tint cold blue-white on snow, a paler warm gold on sand.
+    let g = smoothstep(0.2, 0.75, b.z) * (0.6 + 0.55 * max(dot(n, L), 0.0));
+    let tint = mix(vec3f(0.82, 0.93, 1.0) * 2.4, vec3f(1.0, 0.93, 0.72) * 2.0, grain);
+    surface += tint * g * opacity;
+  } else {
+    surface += vec3f(1.0, 0.98, 0.9) * sparkle * 1.6 * step(0.55, noise);
+  }
 
   let mask = smoothstep(P.iso - 0.07, P.iso + 0.07, d);
   let bgRefracted = background(uv + vec2f(n.x, -n.y) * 0.035 * mask);

@@ -22,6 +22,7 @@ struct Params {
   iso: f32,
   glow: f32,
   screen: vec2f,        // canvas size in pixels
+  glitter: f32,         // 1 = per-grain glint facets on snow and sand, 0 = legacy twinkle
 }
 
 struct Particle {
