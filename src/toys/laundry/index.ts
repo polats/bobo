@@ -1,6 +1,7 @@
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
 import { lookAt, multiply, normalize, perspective, projectPoint, dot, sub, type Mat4, type Vec3 } from '../cloth/math';
-import { Laundry, type GarmentStyle } from './sim';
+import type { Loop } from '../../shell/sound';
+import { Laundry, type FlyingPin, type GarmentStyle } from './sim';
 import { LaundryRenderer } from './render';
 
 export const laundryToy: Toy = {
@@ -79,6 +80,15 @@ class LaundryLine implements ToyInstance {
   private horizon = 0.3;
   private grabs = new Map<number, number>();
   private blowers = new Set<number>();
+  /** Wind bed: breeze plus whatever gust the finger is blowing. */
+  private windLoop: Loop;
+  /** Gust strength last frame, so a swipe that ramps it up whooshes once. */
+  private lastGust = 0;
+  private whooshCool = 0;
+  private flapClock = 0;
+  private lastOnLine = -1;
+  /** Each flying pin's vertical speed last frame, to click when it bounces on the grass. */
+  private pinVy = new Map<FlyingPin, number>();
 
   readonly cfg = {
     palette: 'sunny' as Palette,
@@ -93,6 +103,7 @@ class LaundryLine implements ToyInstance {
     const gl = ctx.canvas.getContext('webgl2', { alpha: false, antialias: true, depth: true });
     if (!gl) throw new Error('WebGL2 is not available on this device.');
     this.gl = gl;
+    this.windLoop = ctx.sound.loop('hiss');
     this.width = ctx.canvas.width;
     this.height = ctx.canvas.height;
     this.buildPanel();
@@ -104,6 +115,8 @@ class LaundryLine implements ToyInstance {
     this.sync();
     this.renderer = new LaundryRenderer(this.gl, this.sim);
     this.grabs.clear();
+    this.pinVy.clear();
+    this.lastOnLine = -1;
     this.updateCamera();
   }
 
@@ -162,8 +175,55 @@ class LaundryLine implements ToyInstance {
     const simMs = performance.now() - t0;
     if (this.sim.poppedThisFrame) this.ctx.haptic('medium');
     else if (this.sim.tornThisFrame) this.ctx.haptic('light');
+    const onLine = this.sim.onLine;
+    this.listen(dt, onLine);
     this.renderer.draw(this.width, this.height, this.view, this.proj, this.viewProj, this.eye, this.horizon, t);
-    this.ctx.setStatus(`${this.sim.onLine}/${this.sim.garments.length} on the line · ${this.sim.n} particles · sim ${simMs.toFixed(1)}ms`);
+    this.ctx.setStatus(`${onLine}/${this.sim.garments.length} on the line · ${this.sim.n} particles · sim ${simMs.toFixed(1)}ms`);
+  }
+
+  /** Wind hiss, gust whooshes and flaps, pegs popping and landing, fabric tearing, washing blowing away. */
+  private listen(dt: number, onLine: number) {
+    const s = this.sim;
+    const gust = Math.hypot(s.gust[0], s.gust[1], s.gust[2]);
+    const wind = Math.min(1, s.cfg.breeze / 12 + gust / 12);
+    this.windLoop.set(wind * 0.7, 0.2 + wind * 0.6);
+    // A swipe that kicks the gust up gets one whoosh, louder for a harder swipe.
+    this.whooshCool -= dt;
+    const rise = gust - this.lastGust;
+    if (rise > 1.5 && this.whooshCool <= 0) {
+      this.whooshCool = 0.25;
+      this.ctx.sound.play('whoosh', { gain: Math.min(0.8, 0.2 + rise * 0.1), pitch: 0.8 + Math.min(0.5, gust * 0.04), pan: clamp(s.gust[0] * 0.08, -0.8, 0.8) });
+    }
+    this.lastGust = gust;
+    // In a strong wind the washing cracks and flaps, faster the harder it blows.
+    const strong = s.cfg.breeze + gust;
+    if (strong > 5 && onLine > 0) {
+      this.flapClock -= dt;
+      if (this.flapClock <= 0) {
+        const k = Math.min(1, (strong - 5) / 10);
+        this.flapClock = (0.55 - 0.35 * k) * (0.7 + Math.random() * 0.6);
+        this.ctx.sound.play('snap', { gain: 0.12 + 0.3 * k, pitch: 0.45 + Math.random() * 0.25, pan: (Math.random() - 0.5) * 1.2 });
+      }
+    }
+    if (s.poppedThisFrame) {
+      const pin = s.flyingPins[s.flyingPins.length - 1];
+      this.ctx.sound.play('knock', { gain: Math.min(1, 0.5 + s.poppedThisFrame * 0.15), pitch: 1.5, pan: pin ? this.pan(pin.x) : 0 });
+    }
+    if (s.tornThisFrame) this.ctx.sound.play('rip', { gain: Math.min(0.9, 0.2 + s.tornThisFrame * 0.06), pitch: 1.2 * 0.95 ** Math.min(8, s.tornThisFrame) });
+    // Last peg gone: the garment sails off on the wind.
+    if (this.lastOnLine >= 0 && onLine < this.lastOnLine) this.ctx.sound.play('whoosh', { gain: 0.5, pitch: 0.7 });
+    this.lastOnLine = onLine;
+    for (const p of s.flyingPins) {
+      const last = this.pinVy.get(p) ?? 0;
+      if (last < -1 && p.vy > 0) this.ctx.sound.play('tick', { gain: Math.min(0.8, -last * 0.15), pitch: 1.2 + Math.random() * 0.4, pan: this.pan(p.x) });
+      this.pinVy.set(p, p.vy);
+    }
+    if (this.pinVy.size > s.flyingPins.length) for (const p of [...this.pinVy.keys()]) if (!s.flyingPins.includes(p)) this.pinVy.delete(p);
+  }
+
+  /** Stereo position for a world x along the line. */
+  private pan(x: number) {
+    return clamp(x / this.sim.postX, -1, 1) * 0.6;
   }
 
   private handleInput(dt: number) {
@@ -175,6 +235,7 @@ class LaundryLine implements ToyInstance {
         if (idx >= 0) {
           this.grabs.set(p.id, idx);
           this.ctx.haptic('light');
+          this.ctx.sound.play('tick', { gain: 0.3, pitch: 0.9, pan: (p.x - 0.5) * 1.2 });
         } else this.blowers.add(p.id);
       }
       const idx = this.grabs.get(p.id);
@@ -255,6 +316,7 @@ class LaundryLine implements ToyInstance {
   }
 
   destroy() {
+    this.windLoop.stop();
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }

@@ -1,3 +1,4 @@
+import type { Loop } from '../../shell/sound';
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
 import { Program, compile, createDouble, createTarget, destroyTarget, gridSize, type DoubleTarget, type Target } from '../../shell/gl';
 import { OBJECTS } from './objects';
@@ -92,6 +93,14 @@ class PowerRinse implements ToyInstance {
   private mistData = new Float32Array(600 * 4);
   private time = 0;
   private seed = Math.random() * 100;
+  /** Jet hiss, grit rattling off where there's dirt, and runoff trickling after the spray. */
+  private sprayLoop: Loop;
+  private gritLoop: Loop;
+  private runLoop: Loop;
+  private runLevel = 0;
+  private aimSpeed = 0;
+  private lastAim: [number, number] | null = null;
+  private milestone = 0;
 
   readonly cfg = {
     strength: 1,
@@ -110,6 +119,9 @@ class PowerRinse implements ToyInstance {
     }
     gl.getExtension('OES_texture_float_linear');
     this.gl = gl;
+    this.sprayLoop = ctx.sound.loop('hiss');
+    this.gritLoop = ctx.sound.loop('crackle');
+    this.runLoop = ctx.sound.loop('trickle');
     const vert = compile(gl, gl.VERTEX_SHADER, S.quadVert);
     const mk = (src: string) => new Program(gl, vert, src);
     this.p = {
@@ -237,6 +249,7 @@ class PowerRinse implements ToyInstance {
     this.finish = 0;
     this.shine = 0;
     this.cleanFrac = 0;
+    this.milestone = 0;
     this.nextBtn.hidden = true;
     this.ctx.progress(0, 'clean');
     this.readStats(); // baseline dirt, before any spraying
@@ -270,6 +283,7 @@ class PowerRinse implements ToyInstance {
   }
 
   private setNozzle(n: Nozzle) {
+    if (this.buttons.length && n !== this.nozzle) this.ctx.sound.play('tick', { pitch: n === 'turbo' ? 1.3 : n === 'fan' ? 0.9 : 1.1, gain: 0.6 });
     this.nozzle = n;
     this.buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(NOZZLES[i].id === n)));
   }
@@ -330,6 +344,8 @@ class PowerRinse implements ToyInstance {
         targets.push({ x: p0.x + (Math.cos(t * 38) * r) / aspect, y: p0.y + Math.sin(t * 38) * r, stretch: 1, mult: 2.1, rMult: 0.65 });
       } else targets.push({ x: p0.x, y: p0.y, stretch: 1, mult: 1, rMult: 1 });
     }
+    // The jet bursting onto the surface: a splash whenever a finger lands.
+    for (const p of ptrs) if (p.justDown) this.ctx.sound.play('splash', { gain: 0.6, pitch: fan ? 0.85 : 1.05, pan: p.x * 2 - 1 });
     this.jetCount = targets.length;
     targets.forEach((tg, i) => {
       const dist = Math.hypot((tg.x - NOZZLE[0]) * aspect, tg.y - NOZZLE[1]);
@@ -432,6 +448,12 @@ class PowerRinse implements ToyInstance {
     }
     this.cleanFrac = Math.max(0, Math.min(1, 1 - dirt / this.initialDirt));
     if (!this.done) this.ctx.progress(this.cleanFrac, 'clean');
+    // Every 10% clean: a pop that climbs in pitch (the 100% chime comes from celebrate()).
+    const m = Math.min(9, Math.floor(this.cleanFrac * 10));
+    if (m > this.milestone) {
+      this.milestone = m;
+      this.ctx.sound.play('pop', { pitch: 0.9 * 1.08 ** m, gain: 0.5 });
+    }
     // A part (head, beak, crate…) coming fully clean gets its own little ping.
     for (let r = 1; r <= 5; r++) {
       if (this.regionDone[r] || this.regionInit[r] < 3) continue;
@@ -441,6 +463,7 @@ class PowerRinse implements ToyInstance {
         const cx = regX[r] / regN[r] / this.stat.w;
         const cy = regY[r] / regN[r] / this.stat.h;
         for (let k = 0; k < 40; k++) this.sparkleAt(cx, cy);
+        this.ctx.sound.play('pop', { pitch: 1.8, gain: 0.6, pan: cx * 2 - 1 });
       }
     }
     if (!this.done && this.cleanFrac >= 0.985) {
@@ -467,6 +490,7 @@ class PowerRinse implements ToyInstance {
     this.wiggle *= Math.exp(-dt * 2.5);
     this.shine *= Math.exp(-dt * 0.8);
     if (this.done && this.time - this.doneAt > 6) this.nextObject();
+    this.sound(dt);
     if (!this.jetCount) return;
     const d = this.sampleDirtAt(this.jetData[0], this.jetData[1]);
     if (d < 0.08) return;
@@ -475,6 +499,33 @@ class PowerRinse implements ToyInstance {
       this.hissClock = 0;
       this.ctx.haptic('light');
     }
+  }
+
+  /**
+   * Loops: the hiss is on while spraying (brighter for a strong or fast-moving jet), grit
+   * crackles in proportion to the dirt under the jet (from the stats already read back), and
+   * runoff trickles on for a moment after the spray stops.
+   */
+  private sound(dt: number) {
+    const on = this.jetCount > 0;
+    if (on) {
+      const a: [number, number] = [this.jetData[0], this.jetData[1]];
+      if (this.lastAim && dt > 0) {
+        const v = Math.hypot((a[0] - this.lastAim[0]) * this.aspect, a[1] - this.lastAim[1]) / dt;
+        this.aimSpeed += (v - this.aimSpeed) * Math.min(1, dt * 8);
+      }
+      this.lastAim = a;
+    } else {
+      this.lastAim = null;
+      this.aimSpeed *= Math.exp(-dt * 6);
+    }
+    const strength = Math.min(1, this.jetData[3] / 2.5);
+    const bright = Math.min(1, 0.35 + strength * 0.4 + this.aimSpeed * 0.25 + (this.nozzle === 'turbo' ? 0.15 : 0));
+    this.sprayLoop.set(on ? 0.55 + strength * 0.35 : 0, bright);
+    const d = on ? this.sampleDirtAt(this.jetData[0], this.jetData[1]) : 0;
+    this.gritLoop.set(Math.min(1, d * 1.4) * 0.6, 0.4 + d * 0.4);
+    this.runLevel = on ? Math.min(1, this.runLevel + dt * 2) : this.runLevel * Math.exp(-dt * 1.2);
+    this.runLoop.set(this.runLevel * 0.4 * Math.min(1, 0.3 + this.cfg.runoff * 0.5), 0.4);
   }
 
   private spawnMist(x: number, y: number, r: number, dt: number) {
@@ -569,6 +620,9 @@ class PowerRinse implements ToyInstance {
   }
 
   destroy() {
+    this.sprayLoop.stop();
+    this.gritLoop.stop();
+    this.runLoop.stop();
     this.release();
     this.dock.remove();
     this.nextBtn.remove();

@@ -1,4 +1,5 @@
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
+import type { Loop } from '../../shell/sound';
 import { Knit, type Size } from './sim';
 import { KnitRenderer, PALETTES, rowColor } from './render';
 import { lookAt, multiply, normalize, perspective, projectPoint, sub, dot, type Mat4, type Vec3 } from '../cloth/math';
@@ -64,6 +65,12 @@ class PullTheThread implements ToyInstance {
   private grabs = new Map<number, { kind: 'rod' | 'cloth'; idx: number }>();
   private hint: HTMLElement;
   private popped = 0;
+  /** Yarn rasping through the loops while it's pulled free. */
+  private slideLoop: Loop;
+  private lastYarn = 0;
+  /** Smoothed stitches-per-second, so ticks climb in pitch as you zip faster. */
+  private popRate = 0;
+  private slide = 0;
 
   readonly cfg = {
     size: 'small' as Size,
@@ -77,6 +84,7 @@ class PullTheThread implements ToyInstance {
     const gl = ctx.canvas.getContext('webgl2', { alpha: false, antialias: true, depth: true });
     if (!gl) throw new Error('WebGL2 is not available on this device.');
     this.gl = gl;
+    this.slideLoop = ctx.sound.loop('hiss');
     this.width = ctx.canvas.width;
     this.height = ctx.canvas.height;
     this.hint = document.createElement('div');
@@ -113,6 +121,9 @@ class PullTheThread implements ToyInstance {
     this.renderer.palette = PALETTES[this.cfg.palette];
     this.grabs.clear();
     this.popped = 0;
+    this.lastYarn = this.sim.yarnLength;
+    this.popRate = 0;
+    this.slide = 0;
     this.hint.style.display = '';
     this.updateCamera();
   }
@@ -178,11 +189,30 @@ class PullTheThread implements ToyInstance {
       this.popped += s.popsThisFrame;
       this.ctx.haptic(s.popsThisFrame > 2 ? 'medium' : 'light');
       this.hint.style.display = 'none';
+      // One tick per frame for however many stitches let go, placed at the last one.
+      const [x, y, z] = s.popEvents[s.popEvents.length - 1] ?? [0, 0, 0];
+      const sx = projectPoint(this.viewProj, x, y, z)[0];
+      const k = Math.min(1, this.popRate / 30);
+      this.ctx.sound.play('tick', { gain: Math.min(0.7, 0.3 + s.popsThisFrame * 0.1), pitch: 0.9 + k * 0.9, pan: (sx - 0.5) * 1.2 });
+      if (!s.stitchesLeft) {
+        // The very last loop pulls free.
+        this.ctx.sound.play('snap', { gain: 0.6, pitch: 1.2 });
+        this.ctx.sound.play('chime', { gain: 0.5 });
+      }
     }
+    if (dt > 0) this.popRate += (s.popsThisFrame / dt - this.popRate) * Math.min(1, dt * 6);
+    // Freed yarn sliding out of the knit: level from how fast the strand is growing.
+    const yarn = s.yarnLength;
+    if (dt > 0) this.slide += (Math.max(0, yarn - this.lastYarn) / dt - this.slide) * Math.min(1, dt * 5);
+    this.lastYarn = yarn;
+    const slide = this.slide;
+    const pulling = s.grabbedRod >= 0 ? Math.min(1, Math.max(0, s.tension - 0.9) * 4) : 0;
+    this.slideLoop.set(Math.min(0.6, slide * 0.6 + pulling * 0.08), 0.15 + Math.min(0.5, slide * 0.3));
     if (s.rowsThisFrame) {
       this.nudge.vy -= 0.9;
       this.nudge.vx += (Math.random() - 0.5) * 0.6;
       this.ctx.haptic('heavy');
+      this.ctx.sound.play('thud', { gain: 0.45, pitch: 1.2 });
     }
     const n = this.nudge;
     n.vx += (-n.x * 90 - n.vx * 12) * dt;
@@ -221,6 +251,7 @@ class PullTheThread implements ToyInstance {
         this.grabs.set(p.id, g);
         if (g.kind === 'rod') s.unfreezeAll();
         this.ctx.haptic('light');
+        this.ctx.sound.play('tick', { gain: 0.25, pitch: g.kind === 'rod' ? 1.3 : 0.8, pan: (p.x - 0.5) * 1.2 });
       }
       if (!g) continue;
       // One finger can pull the yarn while another holds the knit: the natural two-handed unravel.
@@ -298,6 +329,7 @@ class PullTheThread implements ToyInstance {
   }
 
   destroy() {
+    this.slideLoop.stop();
     this.renderer.destroy();
     this.hint.remove();
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();

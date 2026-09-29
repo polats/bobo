@@ -402,8 +402,56 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
   const smoothVel = new Map<number, [number, number]>();
   const pokes: number[] = [];
 
+  // ---------------------------------------------------------------- sound
+  // Everything is driven from CPU-side input (no particle readback): stirring and pouring set the
+  // loop levels each frame, and a dropped jelly blob's landing thud is timed from its fall height.
+  const squelch = ctx.sound.loop('bubble');
+  const grains = ctx.sound.loop('trickle');
+  const landings: { at: number; gain: number; pitch: number; pan: number }[] = [];
+  let clock = 0;
+  let stir = 0;
+  let pourWater = 0;
+  let pourGrain = 0;
+  let grainBright = 0;
+  const panX = (x: number) => (x / domainW - 0.5) * 1.2;
+
+  /** Schedule a thud for when a blob dropped at `y` with upward speed `vy` should hit the pool. */
+  function scheduleLanding(x: number, y: number, vy: number, r: number) {
+    if (s.tilt || s.gravity < 10) return;
+    const floor = domainH * 0.15 + r;
+    const h = y - floor;
+    if (h <= 0) return;
+    const g = s.gravity;
+    // Solve y + vy t - g t^2 / 2 = floor for the positive root.
+    const t = (vy + Math.sqrt(vy * vy + 2 * g * h)) / g;
+    const impact = Math.sqrt(vy * vy + 2 * g * h);
+    const size = r / Math.min(domainW, domainH);
+    landings.push({
+      at: clock + t / Math.max(s.speed, 0.05),
+      gain: Math.min(1, impact / 180) * 0.9,
+      pitch: Math.min(1.4, Math.max(0.6, 0.065 / size)),
+      pan: panX(x),
+    });
+  }
+
+  function updateSound(dt: number) {
+    clock += dt;
+    for (let i = landings.length - 1; i >= 0; i--) {
+      const l = landings[i];
+      if (clock < l.at) continue;
+      ctx.sound.play('thud', { pitch: l.pitch, gain: l.gain, pan: l.pan });
+      if (l.gain > 0.4) ctx.sound.play('squish', { pitch: l.pitch * 0.8, gain: l.gain * 0.6, pan: l.pan });
+      landings.splice(i, 1);
+    }
+    squelch.set(Math.min(1, Math.max(stir, pourWater)), pourWater > stir ? 0.7 : 0.25 + stir * 0.4);
+    grains.set(pourGrain, grainBright);
+  }
+
   function handleInput(dt: number) {
     pokes.length = 0;
+    stir = 0;
+    pourWater = 0;
+    pourGrain = 0;
     const [gx, gy] = gravityDir();
     for (const p of ctx.pointers.active.values()) {
       const x = p.x * domainW;
@@ -417,7 +465,11 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
 
       if (tool === 'poke') {
         if (pokes.length / 6 < MAX_POINTERS) pokes.push(x, y, vx, vy, s.pokeSize, 1);
-        if (p.justDown) ctx.haptic('light');
+        if (p.justDown) {
+          ctx.haptic('light');
+          ctx.sound.play('squish', { pitch: 0.9 + Math.random() * 0.2, gain: 0.5, pan: panX(x) });
+        }
+        stir = Math.max(stir, Math.min(1, Math.hypot(vx, vy) / 220));
         continue;
       }
       let st = pour.get(p.id);
@@ -432,11 +484,19 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
           spawnDisk(JELLY, x, y, r, jellyColor++ % 5, vx * 0.5, vy * 0.5);
           st.nextBall = 0.28;
           ctx.haptic('medium');
+          ctx.sound.play('plop', { pitch: 1.1 - (r / Math.min(domainW, domainH) - 0.05) * 8, gain: 0.45, pan: panX(x) });
+          scheduleLanding(x, y, vy * 0.5, r);
         }
         continue;
       }
       // Pour a stream along gravity: add rows at particle spacing as the stream advances.
       const mat = tool === 'water' ? WATER : tool === 'snow' ? SNOW : SAND;
+      if (p.justDown) ctx.sound.play(mat === WATER ? 'splash' : 'crumble', { pitch: mat === SNOW ? 1.3 : 1, gain: 0.3, pan: panX(x) });
+      if (mat === WATER) pourWater = 0.55;
+      else {
+        pourGrain = mat === SAND ? 0.6 : 0.4;
+        grainBright = mat === SAND ? 0.6 : 0.25;
+      }
       const speed = 55;
       const half = tool === 'sand' ? 3 : 2.5;
       const dx = gx || 0;
@@ -610,6 +670,7 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
   return {
     frame(dt, t) {
       handleInput(dt);
+      updateSound(dt);
       flush();
       const steps = Math.round(s.substeps);
       const dtSub = ((1 / 60) * s.speed) / steps;
@@ -676,6 +737,8 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
     },
 
     destroy() {
+      squelch.stop();
+      grains.stop();
       removeEventListener('devicemotion', onMotion);
       dock.remove();
       context.unconfigure();

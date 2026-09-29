@@ -2,6 +2,7 @@ import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
 import { Program, compile, createDouble, createTarget, destroyTarget, gridSize, type DoubleTarget, type Target } from '../../shell/gl';
 import * as F from '../ink/shaders';
 import * as S from './shaders';
+import type { Loop } from '../../shell/sound';
 import { Burn } from './burn';
 
 export const fireToy: Toy = {
@@ -75,6 +76,16 @@ class Campfire implements ToyInstance {
   private lastPos = new Map<number, [number, number]>();
   private wind = 0;
   private oxygen = 0;
+  /** The fire itself: crackle from how much is burning, a roar when it's fed air, steam when doused. */
+  private crackle: Loop;
+  private roar: Loop;
+  private steam: Loop;
+  /** Cells hissing under the water this frame, smoothed for the steam loop. */
+  private hissing = 0;
+  private hissFrame = 0;
+  private sizzleCool = 0;
+  private whooshCool = 0;
+  private catchCool = 0;
 
   readonly cfg = {
     simRes: 112,
@@ -99,6 +110,9 @@ class Campfire implements ToyInstance {
     }
     gl.getExtension('OES_texture_float_linear');
     this.gl = gl;
+    this.crackle = ctx.sound.loop('crackle');
+    this.roar = ctx.sound.loop('rumble');
+    this.steam = ctx.sound.loop('hiss');
     const vert = compile(gl, gl.VERTEX_SHADER, F.baseVert);
     const mk = (src: string) => new Program(gl, vert, src);
     this.p = {
@@ -258,6 +272,7 @@ class Campfire implements ToyInstance {
     this.burn.cfg.oxygen = this.oxygen;
     this.burn.step(dt, this.wind);
     if (this.burn.newlyLit > 6) this.ctx.haptic('light');
+    this.listen(dt);
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.burnTex);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.burn.w, this.burn.h, gl.RGBA, gl.UNSIGNED_BYTE, this.burn.tex);
@@ -266,8 +281,33 @@ class Campfire implements ToyInstance {
     this.ctx.setStatus(`fire ${Math.round(this.burn.intensity * 100)}% · ${this.burn.embers.length} embers`);
   }
 
+  /** Loops follow the burn state (all CPU-side); sparks pop now and then from wherever it's burning. */
+  private listen(dt: number) {
+    const b = this.burn;
+    const fire = Math.min(1, b.intensity);
+    const air = Math.min(1, this.oxygen);
+    this.crackle.set(Math.min(1, fire * 0.8 + fire * air * 0.3), 0.35 + fire * 0.3 + air * 0.3);
+    this.roar.set(Math.min(1, fire * (0.15 + air * 0.75)), 0.2 + air * 0.6);
+    this.hissing += (this.hissFrame - this.hissing) * Math.min(1, dt * 8);
+    this.hissFrame = 0;
+    this.steam.set(Math.min(0.8, this.hissing / 60), 0.7);
+    // Sap pockets bursting: more often in a bigger, better-fed fire.
+    if (Math.random() < fire * dt * (1.2 + air * 4)) {
+      this.ctx.sound.play('pop', { gain: 0.08 + Math.random() * 0.2, pitch: 1.6 + Math.random() * 1.2, pan: (b.cx - 0.5) * 1.2 });
+    }
+    // New wood catching in a rush.
+    this.catchCool -= dt;
+    if (b.newlyLit > 12 && this.catchCool <= 0) {
+      this.catchCool = 0.5;
+      this.ctx.sound.play('whoosh', { gain: Math.min(0.5, 0.1 + b.newlyLit * 0.01), pitch: 0.5, pan: (b.cx - 0.5) * 1.2 });
+    }
+    this.sizzleCool -= dt;
+    this.whooshCool -= dt;
+  }
+
   private handleInput(dt: number) {
     const aspect = this.width / this.height;
+    const pan = (x: number) => (x - 0.5) * 1.2;
     for (const p of this.ctx.pointers.active.values()) {
       const last = this.lastPos.get(p.id) ?? [p.x, p.y];
       this.lastPos.set(p.id, [p.x, p.y]);
@@ -276,6 +316,7 @@ class Campfire implements ToyInstance {
         case 'wood': {
           if (p.justDown) {
             this.lastPos.set(p.id, [p.x, y]);
+            this.ctx.sound.play('knock', { gain: 0.5, pitch: 0.6, pan: pan(p.x) });
             break;
           }
           this.burn.log(last[0], Math.max(last[1], GROUND - 0.02), p.x, y, 0.017);
@@ -284,6 +325,11 @@ class Campfire implements ToyInstance {
         case 'match': {
           const lit = this.burn.ignite(p.x, y, 0.022);
           if (p.justDown || lit > 0) this.ctx.haptic('light');
+          if (p.justDown) this.ctx.sound.play('sizzle', { gain: 0.35, pitch: 1.6, pan: pan(p.x) });
+          if (lit > 4 && this.catchCool <= 0) {
+            this.catchCool = 0.5;
+            this.ctx.sound.play('whoosh', { gain: 0.35, pitch: 0.6, pan: pan(p.x) });
+          }
           this.splat(this.heat, p.x, y, 0, 0, [0.9, 0.05, 0], 0.08);
           break;
         }
@@ -296,6 +342,10 @@ class Campfire implements ToyInstance {
             this.wind = Math.max(-1.5, Math.min(1.5, this.wind + dx * 18));
             this.oxygen = Math.min(1.5, this.oxygen + speed * dt * 1.5);
             if (speed > 1) this.ctx.haptic('light');
+            if (speed > 0.8 && this.whooshCool <= 0) {
+              this.whooshCool = 0.3;
+              this.ctx.sound.play('whoosh', { gain: Math.min(0.7, 0.15 + speed * 0.1), pitch: 0.9 + Math.min(0.5, speed * 0.08), pan: pan(p.x) });
+            }
           }
           break;
         }
@@ -304,6 +354,12 @@ class Campfire implements ToyInstance {
           this.splat(this.heat, p.x, y, 0, 0, [-0.8, 0, 0.35 + Math.min(1, hissed / 40)], 0.25);
           this.splat(this.velocity, p.x, y, 0, -250, [0, 0, 0], 0.3);
           if (hissed > 3) this.ctx.haptic('medium');
+          if (p.justDown) this.ctx.sound.play('splash', { gain: 0.4, pitch: 1.2, pan: pan(p.x) });
+          this.hissFrame += hissed;
+          if (hissed > 3 && this.sizzleCool <= 0) {
+            this.sizzleCool = 0.15;
+            this.ctx.sound.play('sizzle', { gain: Math.min(0.9, 0.3 + hissed / 60), pitch: 0.9 + Math.random() * 0.3, pan: pan(p.x) });
+          }
           break;
         }
       }
@@ -519,6 +575,9 @@ class Campfire implements ToyInstance {
   }
 
   destroy() {
+    this.crackle.stop();
+    this.roar.stop();
+    this.steam.stop();
     this.release();
     this.dock.remove();
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();

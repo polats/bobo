@@ -27,6 +27,7 @@ const CATALOG: Record<string, Entry> = {
   merge: { added: '2026-09-29T18:00:00+02:00', category: 'Soft & squishy' },
   rinse: { added: '2026-09-29T18:00:00+02:00', category: 'Make & reveal' },
   sandjar: { added: '2026-09-29T18:00:00+02:00', category: 'Make & reveal' },
+  spool: { added: '2026-09-29T11:40:34-04:00', category: 'Cloth & yarn' },
 };
 
 export function meta(id: string): { added: Date; category: Category } {

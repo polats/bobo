@@ -1,3 +1,4 @@
+import type { Loop } from '../../shell/sound';
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
 import { Program, compile, createDouble, destroyTarget, type DoubleTarget, type Target } from '../../shell/gl';
 import * as S from './shaders';
@@ -104,6 +105,11 @@ class Marbling implements ToyInstance {
   private strokeCount = 0;
   private printing = false;
   private segBuf = new Float32Array(S.MAX_TINES * 4);
+  /** Water sloshing under the comb, and ink trickling while a drop is held to pour. */
+  private combLoop: Loop;
+  private pourLoop: Loop;
+  private combSpeed = 0;
+  private plopClock = 0;
 
   readonly cfg = {
     palette: 'ebru' as PaletteId,
@@ -121,6 +127,8 @@ class Marbling implements ToyInstance {
     }
     gl.getExtension('OES_texture_float_linear');
     this.gl = gl;
+    this.combLoop = ctx.sound.loop('bubble');
+    this.pourLoop = ctx.sound.loop('trickle');
     const vert = compile(gl, gl.VERTEX_SHADER, S.quadVert);
     this.p = {
       stroke: new Program(gl, vert, S.strokeFrag),
@@ -237,6 +245,7 @@ class Marbling implements ToyInstance {
         this.ink = i;
         this.inkButtons.forEach((x, j) => x.setAttribute('aria-pressed', String(j === i)));
         if (this.tool !== 'drop') this.setTool('drop');
+        else this.ctx.sound.play('tick', { pitch: 1.1 + i * 0.08, gain: 0.6 });
       });
       return b;
     });
@@ -246,6 +255,7 @@ class Marbling implements ToyInstance {
   }
 
   private setTool(t: Tool) {
+    if (this.toolButtons.length && t !== this.tool) this.ctx.sound.play('tick', { pitch: 0.9, gain: 0.6 });
     this.tool = t;
     this.toolButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(TOOLS[i].id === t)));
   }
@@ -364,7 +374,21 @@ class Marbling implements ToyInstance {
   }
 
   private handleInput(dt: number) {
-    if (this.printing) return;
+    let speed = 0;
+    let pour = 0;
+    this.plopClock += dt;
+    if (!this.printing) [speed, pour] = this.strokeInput(dt);
+    // Loops: comb speed is smoothed so the slosh swells and settles rather than stuttering.
+    this.combSpeed += (speed - this.combSpeed) * Math.min(1, dt * 10);
+    const lvl = Math.min(1, this.combSpeed * 0.9);
+    this.combLoop.set(lvl * 0.7, 0.25 + lvl * 0.5);
+    this.pourLoop.set(pour * 0.5, 0.35);
+  }
+
+  /** Applies strokes; returns [combing speed in bath units/s, pouring 0..1] for the sound loops. */
+  private strokeInput(dt: number): [number, number] {
+    let speed = 0;
+    let pour = 0;
     const [W, H] = this.world;
     const c = this.cfg;
     for (const p of this.ctx.pointers.active.values()) {
@@ -379,6 +403,9 @@ class Marbling implements ToyInstance {
           s.dropR = r;
           this.strokeCount++;
           this.ctx.haptic('light');
+          // Bigger drops plop lower.
+          this.ctx.sound.play('plop', { pitch: Math.max(0.6, Math.min(1.8, 0.035 / r)), gain: 0.7, pan: p.x * 2 - 1 });
+          this.plopClock = 0;
         }
         continue;
       }
@@ -393,12 +420,19 @@ class Marbling implements ToyInstance {
             this.drop(q[0], q[1], c.brush * (0.5 + Math.random() * 0.3), this.inkColor());
             s.la = q;
             this.strokeCount++;
+            if (this.plopClock > 0.07) {
+              this.plopClock = 0;
+              this.ctx.sound.play('plop', { pitch: Math.min(2, 0.05 / c.brush), gain: 0.35, pan: p.x * 2 - 1 });
+            }
           } else if (p.held > 0.12) {
             // Holding still keeps pouring: the drop grows by constant area per second.
             const r2 = s.dropR * s.dropR + dt * 0.012 * (c.brush / 0.035) ** 2;
             const inc = Math.sqrt(Math.max(0, r2 - s.dropR * s.dropR));
             s.dropR = Math.sqrt(r2);
-            if (s.dropR < 0.35) this.drop(s.la[0], s.la[1], inc, this.inkColor());
+            if (s.dropR < 0.35) {
+              this.drop(s.la[0], s.la[1], inc, this.inkColor());
+              pour = 1;
+            }
           }
           break;
         }
@@ -409,6 +443,7 @@ class Marbling implements ToyInstance {
           let da = a1 - a0;
           da = Math.atan2(Math.sin(da), Math.cos(da));
           if (r > 0.015 && Math.abs(da) > 0.01) {
+            speed += dt > 0 ? (Math.abs(da) * r) / dt : 0;
             this.swirl(s.start[0], s.start[1], Math.max(0.08, r * 1.3), da * 1.6);
             s.la = q;
             this.tick(s);
@@ -431,6 +466,7 @@ class Marbling implements ToyInstance {
             this.tines(this.rake(a, b, s.n0, sa, sb), tineR);
           }
           s.travelled += dist;
+          if (dt > 0) speed += (dist / dt) * (this.tool === 'stylus' ? 0.6 : 1);
           s.la = q;
           this.strokeCount++;
           this.tick(s);
@@ -438,6 +474,7 @@ class Marbling implements ToyInstance {
       }
     }
     for (const id of [...this.strokes.keys()]) if (!this.ctx.pointers.active.has(id)) this.strokes.delete(id);
+    return [speed, pour];
   }
 
   /** Tine segments for the current tool: one for the stylus, a rigid rake for combs (wavy for the wave comb). */
@@ -470,12 +507,14 @@ class Marbling implements ToyInstance {
     if (this.printing) return;
     this.printing = true;
     this.ctx.haptic('light');
+    this.ctx.sound.play('whoosh', { pitch: 1.2, gain: 0.4 });
     const ok = await this.shelf.lay(
       () => this.capturePrint(),
       () => {
         // Real prints lift nearly all the ink; a faint ghost stays on the bath.
         this.clearBath(0.1);
         this.ctx.haptic('heavy');
+        this.ctx.sound.play('rip', { pitch: 1.3, gain: 0.35 });
         this.ctx.celebrate('Printed!');
       },
     );
@@ -547,6 +586,8 @@ class Marbling implements ToyInstance {
   }
 
   destroy() {
+    this.combLoop.stop();
+    this.pourLoop.stop();
     const gl = this.gl;
     destroyTarget(gl, this.state.read);
     destroyTarget(gl, this.state.write);

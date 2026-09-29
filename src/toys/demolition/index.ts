@@ -1,3 +1,4 @@
+import type { Loop } from '../../shell/sound';
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
 import { Kind, Shape, World, type Body, type Grab, type Rope } from './physics';
 import { DemolitionRenderer, FLOATS, Sprite } from './render';
@@ -93,6 +94,11 @@ class Demolition implements ToyInstance {
   private drags = new Map<number, { sx: number; sy: number; ax: number; ay: number; t: number; grab?: Grab; lastBuild: number }>();
   private simMs = 0;
   private breaksThisSecond = 0;
+  /** Debris rumble whose level follows how much is moving; swing whoosh latch and cooldown. */
+  private rumble: Loop;
+  private swingArmed = true;
+  private swingCool = 0;
+  private crumbleCool = 0;
 
   readonly cfg = {
     scene: 'tower' as SceneId,
@@ -106,6 +112,7 @@ class Demolition implements ToyInstance {
     const gl = ctx.canvas.getContext('webgl2', { alpha: false, antialias: true });
     if (!gl) throw new Error('WebGL2 is not available on this device.');
     this.gl = gl;
+    this.rumble = ctx.sound.loop('rumble');
     this.renderer = new DemolitionRenderer(gl);
     this.width = ctx.canvas.width;
     this.height = ctx.canvas.height;
@@ -239,6 +246,7 @@ class Demolition implements ToyInstance {
     this.fracture();
     this.simMs = this.simMs * 0.9 + (performance.now() - t0) * 0.1;
     this.impacts();
+    this.impactSounds(dt);
     this.updateParticles(sdt);
     this.world.compact();
     this.breaksThisSecond = Math.max(0, this.breaksThisSecond - dt * 8);
@@ -272,10 +280,12 @@ class Demolition implements ToyInstance {
             w.grabs.push(d.grab);
             w.wake(b);
             this.ctx.haptic('light');
+            this.ctx.sound.play('tick', { pitch: 1.2, gain: 0.6, pan: this.pan(x) });
           }
         } else if (this.tool === 'bomb') {
           this.bombs.push({ x, y, fuse: 0.45 });
           this.ctx.haptic('light');
+          this.ctx.sound.play('sizzle', { gain: 0.35, pitch: 1.3, pan: this.pan(x) });
         }
         this.drags.set(p.id, d);
       }
@@ -294,6 +304,7 @@ class Demolition implements ToyInstance {
         const col = BUILD_COLORS[(Math.random() * BUILD_COLORS.length) | 0];
         const wide = Math.random() < 0.6;
         w.add({ shape: Shape.Box, x, y, hx: wide ? 0.45 : 0.25, hy: 0.25, a: (Math.random() - 0.5) * 0.3, color: col, breakable: true });
+        this.ctx.sound.play('tick', { pitch: wide ? 0.8 : 1.1, gain: 0.5, pan: this.pan(x) });
       } else if (this.tool === 'cannon') {
         d.ax = x;
         d.ay = y;
@@ -321,6 +332,7 @@ class Demolition implements ToyInstance {
           color: 0x22252c,
         });
         this.ctx.haptic('medium');
+        this.ctx.sound.play('whoosh', { pitch: tap ? 1 : 0.8 + Math.min(0.7, sp * k * 0.02), gain: 0.5, pan: this.pan(d.sx) });
       }
     }
   }
@@ -392,6 +404,8 @@ class Demolition implements ToyInstance {
     this.hitStop = 0.08;
     this.slowRamp = 0.3;
     this.ctx.haptic('heavy');
+    this.ctx.sound.play('thud', { pitch: 0.45, gain: 1, pan: this.pan(x) });
+    this.ctx.sound.play('crumble', { pitch: 0.7, gain: 0.8, pan: this.pan(x) });
   }
 
   /** Blocks that took a big hit split into 2–4 pieces that fly apart. */
@@ -414,6 +428,12 @@ class Demolition implements ToyInstance {
       this.breaksThisSecond += n;
       this.shake = Math.min(1, this.shake + 0.05 * Math.min(6, n));
       this.ctx.haptic(n >= 4 ? 'heavy' : 'medium');
+      if (this.crumbleCool <= 0) {
+        // Bricks cracking apart: one crumble per burst, heavier the more broke at once.
+        this.crumbleCool = 0.12;
+        const b = broken[0];
+        this.ctx.sound.play('crumble', { pitch: 1.2 - Math.min(0.5, n * 0.06), gain: Math.min(1, 0.4 + n * 0.1), pan: this.pan(b.x) });
+      }
       if (n >= 5 && this.hitStop <= 0 && this.breaksThisSecond < 20) {
         this.hitStop = 0.05;
         this.slowRamp = Math.min(this.slowRamp, 0.5);
@@ -468,6 +488,60 @@ class Demolition implements ToyInstance {
       this.puff(im.x, im.y, (Math.random() - 0.5) * 2, 0.8 + Math.random(), 0.2 + Math.min(0.4, im.speed * 0.02), [0.8, 0.75, 0.66], 0.6);
       if (im.speed > 9) this.shake = Math.min(1, this.shake + 0.04);
     }
+  }
+
+  /**
+   * Sounds for this frame's contacts: only the loudest few impacts get a knock (or a thud when a
+   * heavy one lands on the ground), pitched by the lighter body's mass; a rumble bed follows how
+   * much is moving, and the wrecking ball whooshes when it swings fast.
+   */
+  private impactSounds(dt: number) {
+    this.swingCool -= dt;
+    this.crumbleCool -= dt;
+    const snd = this.ctx.sound;
+    // Pick the top 3 by impulse without sorting the whole list.
+    const top: (typeof this.world.impacts)[number][] = [];
+    for (const im of this.world.impacts) {
+      if (im.speed < 3.5) continue;
+      if (top.length < 3) top.push(im);
+      else {
+        let lo = 0;
+        for (let i = 1; i < 3; i++) if (top[i].impulse < top[lo].impulse) lo = i;
+        if (im.impulse > top[lo].impulse) top[lo] = im;
+      }
+    }
+    for (const im of top) {
+      const mass = im.impulse / im.speed;
+      const gain = Math.min(1, (im.speed - 3) / 10);
+      const pan = this.pan(im.x);
+      if (im.y < 0.2 && mass > 1.2 && im.speed > 5) snd.play('thud', { pitch: Math.max(0.5, 1.1 - mass * 0.08), gain, pan });
+      else snd.play('knock', { pitch: Math.max(0.55, Math.min(1.8, 1.5 / Math.sqrt(Math.max(0.2, mass)))), gain: gain * 0.8, pan });
+    }
+    // Collapse bed: fraction of loose bodies moving at speed.
+    let moving = 0;
+    for (const b of this.world.bodies) {
+      if (b.kind !== Kind.Block || b.sleeping) continue;
+      if (b.vx * b.vx + b.vy * b.vy > 4) moving++;
+    }
+    const level = Math.min(1, moving / 30);
+    this.rumble.set(level * 0.8, 0.3 + level * 0.5);
+    if (moving > 25 && this.crumbleCool <= 0) {
+      this.crumbleCool = 0.35;
+      snd.play('crumble', { pitch: 0.8, gain: 0.5 });
+    }
+    // Wrecking ball: one whoosh per fast swing, re-armed once it slows down.
+    const ball = this.crane.ball;
+    const sp = Math.hypot(ball.vx, ball.vy);
+    if (sp > 9 && this.swingArmed && this.swingCool <= 0) {
+      this.swingArmed = false;
+      this.swingCool = 0.4;
+      snd.play('whoosh', { pitch: 0.6 + Math.min(0.4, sp * 0.02), gain: Math.min(1, sp / 20), pan: this.pan(ball.x) });
+    } else if (sp < 5) this.swingArmed = true;
+  }
+
+  /** Stereo position for a world x. */
+  private pan(x: number) {
+    return Math.max(-1, Math.min(1, ((x - this.cx) / this.viewW) * 1.6));
   }
 
   // ------------------------------------------------------------------ particles
@@ -620,6 +694,7 @@ class Demolition implements ToyInstance {
   }
 
   destroy() {
+    this.rumble.stop();
     this.dock.remove();
     this.renderer.destroy();
   }

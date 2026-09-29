@@ -21,6 +21,7 @@ A physics sandbox for playing with novel, satisfying, performant simulations —
 | **Jelly Merge** | Suika with gummies: drop jelly fruit into a jar; matching sizes squish into a bigger one, all the way to a giant Bobo. | Jelly Stack's shape matching + merge rules on WebGL2 (`src/toys/merge`) |
 | **Power Rinse** | Blast a mud-caked Bobo statue, duck, gnome or mosaic clean; a "% clean" ring fills and hidden details appear. | Erodible mud and moss layers, runoff and spray on WebGL2 (`src/toys/rinse`) |
 | **Sand Jar** | Pour coloured sand through a funnel into a bottle, poke scallops, tilt the strata; or pour matching colours to reveal a hidden picture. | Sand-only falling-sand CA with picture targets on WebGL2 (`src/toys/sandjar`) |
+| **Spool Sort** | Tap a spool and it reels its colour out of a knitted picture from the bottom up; stitches tug and sag, and anything cut loose drops away. | Mass-spring knit + verlet yarn on Canvas 2D (`src/toys/spool`) |
 | **Demolition Tower** | Swing a wrecking ball, drop bombs or flick cannonballs into brick towers, pyramids and castles; blocks shatter into debris and dust. | Pure-TS 2D rigid bodies (Box2D v3-style soft step, sleeping) + WebGL2 (`src/toys/demolition`) |
 | **Ferro Blob** | Drag a magnet under a dish of black ferrofluid: it crawls after you and bristles with spikes; two fingers split it, taps drop droplets. | Double-density particle liquid + Rosensweig spike lattice + chrome shading on WebGL2 (`src/toys/ferro`) |
 | **Laundry Line** | Washing pegged to a sagging line: swipe for gusts, hold for a storm; pegs pop and laundry blows away. | XPBD cloth + rope on CPU + WebGL2 (`src/toys/laundry`) |
@@ -44,7 +45,8 @@ Next up, from [docs/research/cloth-knitting.md](docs/research/cloth-knitting.md)
 
 | Next | What | Builds on |
 |---|---|---|
-| **Sound + haptics layer** | Shared Web Audio engine (grains, procedural motors, modal clicks) and a native Core Haptics bridge for continuous, load-driven vibration; retrofit every toy | [shear-knit.md §2, §5](docs/research/shear-knit.md) · [Core Haptics](https://developer.apple.com/documentation/corehaptics) |
+| **Dig Down** | Scoop a backyard cross-section; soil holds until undercut, then crumbles; dig up finds for a shelf | Sand CA + Demolition's rigid bodies · [2026-directions.md](docs/research/2026-directions.md) |
+| **Continuous haptics** | A native Core Haptics bridge for load-driven vibration that follows the procedural sound layer | [shear-knit.md §2](docs/research/shear-knit.md) · [Core Haptics](https://developer.apple.com/documentation/corehaptics) |
 | **Shear** | Clip the fleece off a sheep with shell fur and cut maps; the fleece peels off in one piece | Tear Sheet cutting, Laundry Line pins · [Lengyel et al. 2001](https://hhoppe.com/proj/fur/) |
 | **Rope & yarn ball** | Ropes, chains and a yarn ball that unspools and tangles as a cat bats it | Pull the Thread's yarn · [Cosserat rods](https://animation.rwth-aachen.de/publication/0550/) |
 | **Knit-a-Scarf** | Knit stitch by stitch from your own spun yarn, then dress the sheep | Pull the Thread's knit grid · [Stitch Meshes](https://www.cemyuksel.com/research/stitchmeshes/) |
@@ -85,7 +87,7 @@ npm run mobile:ios           # build only → mobile/out/ios/Build/Products/Debu
 
 ```
 src/main.ts            hub + toy host (frame loop, FPS, resize, haptics)
-src/shell/             panel (sliders), multi-touch pointers, shared styles, Toy interface
+src/shell/             hub, panel (sliders), multi-touch pointers, procedural sound (sound.ts), shared styles, Toy interface
 src/toys/<toy>/        one folder per toy; export a `Toy` from index.ts and add it to main.ts
 mobile/build-ios.mjs   Capacitor iOS build/install
 ```

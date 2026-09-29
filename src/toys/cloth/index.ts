@@ -1,5 +1,6 @@
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
-import { Cloth, type Scene } from './sim';
+import type { Loop } from '../../shell/sound';
+import { Cloth, type Ball, type Scene } from './sim';
 import { ClothRenderer, type Fabric, type TrailPoint } from './render';
 import { lookAt, multiply, normalize, perspective, projectPoint, sub, dot, type Mat4, type Vec3 } from './math';
 
@@ -70,6 +71,16 @@ class TearSheet implements ToyInstance {
   private dockButtons: HTMLButtonElement[] = [];
   private tornTotal = 0;
   private hue = 0;
+  /** Wind through the fabric: a hiss that follows the wind slider and how fast the cloth flaps. */
+  private windLoop: Loop;
+  /** Screen x of the last tear or grab, for panning the rip. */
+  private tearX = 0.5;
+  private cutX = 0.5;
+  /** Each ball's vertical speed last frame, so a hard landing on the floor thuds once. */
+  private ballVy = new Map<Ball, number>();
+  /** Hand speed while holding cloth (UV/s, smoothed), for the fling whoosh. */
+  private fling = 0;
+  private flingCool = 0;
 
   readonly cfg = {
     scene: 'curtain' as Scene,
@@ -86,6 +97,7 @@ class TearSheet implements ToyInstance {
     const gl = ctx.canvas.getContext('webgl2', { alpha: false, antialias: true, depth: true });
     if (!gl) throw new Error('WebGL2 is not available on this device.');
     this.gl = gl;
+    this.windLoop = ctx.sound.loop('hiss');
     this.width = ctx.canvas.width;
     this.height = ctx.canvas.height;
     this.dock = this.buildDock();
@@ -103,6 +115,7 @@ class TearSheet implements ToyInstance {
     this.grabs.clear();
     this.tornTotal = 0;
     this.shake = 0;
+    this.ballVy.clear();
     this.updateCamera();
     // Hammock is for dropping things on; default to the ball tool there.
     this.setTool(c.scene === 'hammock' ? 'ball' : c.scene === 'flag' ? 'ball' : 'grab');
@@ -209,6 +222,7 @@ class TearSheet implements ToyInstance {
     const simMs = performance.now() - t0;
     this.tornTotal += this.sim.tornThisFrame;
     this.feel(dt);
+    this.listen(dt);
     for (const p of this.trail) p.age += dt;
     while (this.trail.length && this.trail[0].age > 0.35) this.trail.shift();
     this.renderer.draw(this.width, this.height, this.view, this.proj, this.viewProj, this.eye, FABRIC[this.sim.scene], this.trail);
@@ -220,6 +234,10 @@ class TearSheet implements ToyInstance {
     const s = this.sim;
     if (s.tornThisFrame > 0) {
       this.ctx.haptic(s.tornThisFrame >= 3 ? 'heavy' : 'medium');
+      // One rip per frame, longer and lower the more threads went at once; a big burst also cracks.
+      const n = s.tornThisFrame;
+      this.ctx.sound.play('rip', { gain: Math.min(1, 0.35 + n * 0.08), pitch: 1.25 * 0.94 ** Math.min(10, n), pan: this.pan(this.tearX) });
+      if (n >= 5) this.ctx.sound.play('snap', { gain: Math.min(0.8, 0.3 + n * 0.04), pitch: 0.8, pan: this.pan(this.tearX) });
       this.shake = Math.min(0.03, this.shake + 0.008 * Math.min(3, s.tornThisFrame));
       this.strainClock = 0;
     } else if (this.grabs.size && s.maxStrain > 0.06) {
@@ -228,6 +246,8 @@ class TearSheet implements ToyInstance {
       if (this.strainClock > 0.22 - 0.18 * k) {
         this.strainClock = 0;
         this.ctx.haptic(k > 0.6 ? 'medium' : 'light');
+        // Fibres creaking under load: ticks climb in pitch as it nears the tear.
+        this.ctx.sound.play('tick', { gain: 0.15 + 0.35 * k, pitch: 0.8 + k * 0.9, pan: this.pan(this.tearX) });
       }
     }
     if (this.shake > 1e-4) {
@@ -238,6 +258,8 @@ class TearSheet implements ToyInstance {
 
   private handleInput(dt: number) {
     const s = this.sim;
+    let handSpeed = 0;
+    let cutCount = 0;
     for (const p of this.ctx.pointers.active.values()) {
       if (this.tool === 'grab') {
         let hd = this.grabs.get(p.id);
@@ -251,6 +273,8 @@ class TearSheet implements ToyInstance {
           this.ctx.haptic('light');
         }
         hd.target = this.unprojectAt(p.x, p.y, hd.target);
+        this.tearX = p.x;
+        if (dt > 0) handSpeed = Math.max(handSpeed, Math.hypot(p.dx, p.dy) / dt);
       } else if (this.tool === 'cut') {
         const last = this.lastCut.get(p.id);
         if (last) {
@@ -263,6 +287,8 @@ class TearSheet implements ToyInstance {
           if (cut) {
             this.tornTotal += cut;
             this.ctx.haptic(cut > 4 ? 'medium' : 'light');
+            cutCount += cut;
+            this.cutX = this.tearX = p.x;
           }
         }
         this.lastCut.set(p.id, [p.x, p.y]);
@@ -278,7 +304,39 @@ class TearSheet implements ToyInstance {
     }
     for (const id of [...this.lastCut.keys()]) if (!this.ctx.pointers.active.has(id)) this.lastCut.delete(id);
     s.grabbed = -1;
-    void dt;
+    // A slash is a quick, bright snip; one per frame however many threads the blade crossed.
+    if (cutCount) this.ctx.sound.play('rip', { gain: Math.min(0.9, 0.25 + cutCount * 0.05), pitch: 1.7, pan: this.pan(this.cutX) });
+    this.fling += (handSpeed - this.fling) * Math.min(1, dt * 20);
+  }
+
+  /** Continuous and ambient sound: wind bed, cloth being flung, balls landing. */
+  private listen(dt: number) {
+    const s = this.sim;
+    const wind = this.cfg.wind / 14;
+    // Flapping adds to the hiss when there's a flag-sized wind; a swung sheet adds a little too.
+    const swing = this.grabs.size ? Math.min(1, this.fling / 4) : 0;
+    this.windLoop.set(Math.min(1, wind * 0.55 + swing * 0.25), 0.25 + wind * 0.5 + swing * 0.3);
+    this.flingCool -= dt;
+    if (this.grabs.size && this.fling > 2.5 && this.flingCool <= 0) {
+      this.flingCool = 0.35;
+      this.ctx.sound.play('whoosh', { gain: Math.min(0.6, 0.15 + (this.fling - 2.5) * 0.08), pitch: 0.8 + Math.min(0.5, this.fling * 0.05), pan: this.pan(this.tearX) });
+    }
+    const floor = s.floorY;
+    for (const b of s.balls) {
+      const last = this.ballVy.get(b) ?? 0;
+      if (last < -1.5 && b.vy > last * 0.5 && b.y - b.r <= floor + 0.02) {
+        const k = Math.min(1, -last / 8);
+        const [sx] = projectPoint(this.viewProj, b.x, b.y, b.z);
+        this.ctx.sound.play('thud', { gain: 0.2 + 0.6 * k, pitch: 1.3 - (b.r - 0.05), pan: this.pan(sx) });
+      }
+      this.ballVy.set(b, b.vy);
+    }
+    if (this.ballVy.size > s.balls.length) for (const b of [...this.ballVy.keys()]) if (!s.balls.includes(b)) this.ballVy.delete(b);
+  }
+
+  /** Stereo position for a screen x in UV space. */
+  private pan(x: number) {
+    return (x - 0.5) * 1.2;
   }
 
   /** Nearest particle to the pointer in screen space, within a finger-sized radius. */
@@ -381,6 +439,7 @@ class TearSheet implements ToyInstance {
     });
     if (this.sim.balls.length > 40) this.sim.balls.shift();
     this.ctx.haptic('light');
+    this.ctx.sound.play('whoosh', { gain: 0.3, pitch: 1.3 - this.cfg.ballSize, pan: this.pan(x) });
   }
 
   resize(width: number, height: number) {
@@ -390,6 +449,7 @@ class TearSheet implements ToyInstance {
   }
 
   destroy() {
+    this.windLoop.stop();
     this.dock.remove();
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();
   }

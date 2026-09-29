@@ -1,4 +1,5 @@
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
+import type { Loop } from '../../shell/sound';
 import { JarSim, PALETTE, CYCLE, COLOR_NAMES, PICTURES, type Mode } from './sim';
 import { JarRenderer } from './render';
 
@@ -86,6 +87,11 @@ class SandJar implements ToyInstance {
   private railButtons = new Map<string, HTMLButtonElement>();
   private shelfEl!: HTMLElement;
   private shelf: string[] = [];
+  // Sound: one trickle bed for pouring and sliding grains, ticks as layers land, chimes at milestones.
+  private pourBed: Loop;
+  private pourLevel = 0;
+  private pourBright = 0;
+  private milestone = 0;
   private onOrient = (e: DeviceOrientationEvent) => {
     if (e.gamma == null) return;
     this.sensorTilt = Math.max(-1, Math.min(1, ((e.gamma ?? 0) * Math.PI) / 180));
@@ -107,6 +113,7 @@ class SandJar implements ToyInstance {
     this.renderer = new JarRenderer(gl);
     this.width = ctx.canvas.width;
     this.height = ctx.canvas.height;
+    this.pourBed = ctx.sound.loop('trickle');
     const style = document.createElement('style');
     style.textContent = css;
     ctx.overlay.appendChild(style);
@@ -130,6 +137,7 @@ class SandJar implements ToyInstance {
     this.renderer.setSim(this.sim);
     this.done = false;
     this.shimmer = -1;
+    this.milestone = 0;
     this.ctx.progress(0, this.cfg.mode === 'jar' ? 'full' : 'revealed');
   }
 
@@ -157,6 +165,7 @@ class SandJar implements ToyInstance {
         this.autoColor = false;
         this.color = c;
         this.syncTray();
+        this.ctx.sound.play('tick', { pitch: 1.2 + c * 0.05, gain: 0.3 });
       });
       this.trayButtons.push(b);
       tray.appendChild(b);
@@ -272,7 +281,11 @@ class SandJar implements ToyInstance {
       },
     );
     panel.action('Seal & keep', () => this.keep());
-    panel.action('Empty', () => this.rebuild());
+    panel.action('Empty', () => {
+      this.ctx.sound.play('crumble', { pitch: 0.8, gain: 0.6 });
+      this.ctx.sound.play('whoosh', { pitch: 0.8, gain: 0.3 });
+      this.rebuild();
+    });
     panel.action('Clear shelf', () => {
       this.shelf = [];
       this.saveShelf();
@@ -292,7 +305,9 @@ class SandJar implements ToyInstance {
     s.tilt = Math.max(-1.05, Math.min(1.05, tilt));
     const view = this.tiltMode && this.sensorTilt !== null ? 0 : this.dragTilt;
     s.step();
+    const moved = s.movedThisStep;
     s.step();
+    this.updateSound(moved + s.movedThisStep);
     if (s.mode === 'reveal' && !this.done && s.targetCount && s.matched / s.targetCount >= 0.8) this.completeReveal();
     if (this.shimmer >= 0) {
       this.shimmer += dt / 1.6;
@@ -300,8 +315,10 @@ class SandJar implements ToyInstance {
     }
     if (++this.counter % 8 === 0) {
       s.countFilled();
-      if (s.mode === 'jar') this.ctx.progress(Math.min(1, s.filled / Math.max(1, s.openCount)), 'full');
-      else this.ctx.progress(Math.min(1, s.matched / Math.max(1, s.targetCount)), 'revealed');
+      const frac = s.mode === 'jar' ? Math.min(1, s.filled / Math.max(1, s.openCount)) : Math.min(1, s.matched / Math.max(1, s.targetCount));
+      if (s.mode === 'jar') this.ctx.progress(frac, 'full');
+      else this.ctx.progress(frac, 'revealed');
+      this.checkMilestone(frac);
     }
     this.renderer.draw(s, this.width, this.height, {
       time: t,
@@ -318,6 +335,7 @@ class SandJar implements ToyInstance {
     const s = this.sim;
     const aspect = this.width / this.height;
     this.toolPos = [0, 0, 0, 0];
+    this.pourLevel = 0;
     const cx = s.jar.cx, cy = (s.jar.y0 + s.jar.yTop) / 2;
     const view = this.tiltMode && this.sensorTilt !== null ? 0 : this.dragTilt;
     for (const p of this.ctx.pointers.active.values()) {
@@ -341,6 +359,8 @@ class SandJar implements ToyInstance {
           if (this.pourClock > 2.2) {
             this.pourClock = 0;
             this.cycleIdx = (this.cycleIdx + 1) % CYCLE.length;
+            // A new layer starts: a soft click as the colour changes.
+            this.ctx.sound.play('tick', { pitch: 1.1 + this.cycleIdx * 0.04, gain: 0.3, pan: this.pan(gx) });
           }
           this.color = CYCLE[this.cycleIdx];
         }
@@ -349,6 +369,14 @@ class SandJar implements ToyInstance {
         if (made && this.tickClock > 0.12) {
           this.tickClock = 0;
           this.ctx.haptic('light');
+          this.ctx.sound.play('tick', { pitch: 0.7 + Math.random() * 0.3 + this.fillFrac() * 0.6, gain: 0.12, pan: this.pan(gx) });
+        }
+        if (made) {
+          // Louder with the pour rate; brighter for light colours and as the fall gets shorter near the top.
+          const [r, g, b] = PALETTE[this.color];
+          const lum = 0.3 * r + 0.55 * g + 0.15 * b;
+          this.pourLevel = Math.max(this.pourLevel, 0.35 + Math.min(0.45, this.cfg.rate / 60));
+          this.pourBright = 0.3 + lum * 0.35 + this.fillFrac() * 0.3;
         }
       } else if (this.tool === 'stick') {
         this.toolPos = [gx, gy, 2, 0];
@@ -356,14 +384,49 @@ class SandJar implements ToyInstance {
         const steps = Math.max(1, Math.ceil(Math.hypot(gx - last[0], gy - last[1])));
         let pushed = 0;
         for (let k = 1; k <= steps; k++) pushed += s.poke(last[0] + ((gx - last[0]) * k) / steps, last[1] + ((gy - last[1]) * k) / steps, 1.6);
-        if (pushed > 6) this.ctx.haptic('light');
+        if (pushed > 6) {
+          this.ctx.haptic('light');
+          this.ctx.sound.play('crumble', { pitch: 1.2, gain: Math.min(0.4, pushed / 60), pan: this.pan(gx) });
+        }
       } else {
         const r = 5;
         this.toolPos = [gx, gy, 3, r];
-        if (s.scoop(gx, gy, r) > 4) this.ctx.haptic('light');
+        const removed = s.scoop(gx, gy, r);
+        if (removed > 4) {
+          this.ctx.haptic('light');
+          this.ctx.sound.play('crumble', { pitch: 0.9, gain: Math.min(0.5, removed / 50), pan: this.pan(gx) });
+        }
       }
     }
     for (const id of [...this.lastPos.keys()]) if (!this.ctx.pointers.active.has(id)) this.lastPos.delete(id);
+  }
+
+  // ------------------------------------------------------------------ sound
+
+  private fillFrac() {
+    const s = this.sim;
+    return Math.min(1, s.filled / Math.max(1, s.openCount));
+  }
+
+  private pan(gx: number) {
+    return (gx / this.sim.W - 0.5) * 1.2;
+  }
+
+  /** Pouring drives the bed; otherwise grains sliding (tilt, stick, scoop) keep a quieter, duller trickle. */
+  private updateSound(moved: number) {
+    const slide = Math.min(0.5, Math.sqrt(moved / (this.sim.W * 6)) * 0.5);
+    if (this.pourLevel > 0) this.pourBed.set(Math.max(this.pourLevel, slide), this.pourBright);
+    else this.pourBed.set(slide > 0.06 ? slide : 0, 0.25);
+  }
+
+  /** Quarter marks get a rising pop and a soft chime; the reveal itself chimes through celebrate(). */
+  private checkMilestone(frac: number) {
+    const marks = this.sim.mode === 'jar' ? [0.25, 0.5, 0.75, 0.97] : [0.25, 0.5, 0.75];
+    while (this.milestone < marks.length && frac >= marks[this.milestone]) {
+      const k = this.milestone++;
+      this.ctx.sound.play('pop', { pitch: 1 + k * 0.25, gain: 0.45 });
+      this.ctx.sound.play('chime', { pitch: 1 + k * 0.12, gain: k === marks.length - 1 ? 0.6 : 0.3 });
+    }
   }
 
   private completeReveal() {
@@ -431,6 +494,7 @@ class SandJar implements ToyInstance {
   }
 
   destroy() {
+    this.pourBed.stop();
     removeEventListener('deviceorientation', this.onOrient);
     this.ctx.progress(null);
     this.ui.forEach((e) => e.remove());

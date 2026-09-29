@@ -82,6 +82,12 @@ export class Sim {
   booms = 0;
   /** Largest blast radius this step (cells), for scaling the flash. */
   boomSize = 0;
+  /** Flame and burning cells updated this step, for the fire's crackle. */
+  flames = 0;
+  /** Lava cells updated this step, for its rumble. */
+  molten = 0;
+  /** Hot things hitting water this step (steam made), for the sizzle. */
+  quench = 0;
   /** Gunpowder cells lit by a blast, detonated next step: a crackling chain that also runs underwater. */
   private fuse: number[] = [];
 
@@ -170,6 +176,9 @@ export class Sim {
     this.tick = this.tick === 65535 ? 1 : this.tick + 1;
     this.booms = 0;
     this.boomSize = 0;
+    this.flames = 0;
+    this.molten = 0;
+    this.quench = 0;
     if (this.fuse.length) {
       const lit = this.fuse.splice(0, Math.min(this.fuse.length, 48));
       for (const j of lit) if (this.mat[j] === POWDER) this.explode(j % this.w, (j / this.w) | 0);
@@ -199,9 +208,11 @@ export class Sim {
             this.acid(i, x, y);
             break;
           case LAVA:
+            this.molten++;
             this.lava(i, x, y);
             break;
           case FIRE:
+            this.flames++;
             this.fire(i, x, y);
             break;
           case SMOKE:
@@ -214,10 +225,16 @@ export class Sim {
             this.ember(i, x, y);
             break;
           case WOOD:
-            if (this.life[i] > 0) this.burning(i, x, y, 0.35, 0.03);
+            if (this.life[i] > 0) {
+              this.flames++;
+              this.burning(i, x, y, 0.35, 0.03);
+            }
             break;
           case PLANT:
-            if (this.life[i] > 0) this.burning(i, x, y, 0.5, 0.12);
+            if (this.life[i] > 0) {
+              this.flames++;
+              this.burning(i, x, y, 0.5, 0.12);
+            }
             else this.plant(i, x, y);
             break;
           case ICE:
@@ -425,6 +442,7 @@ export class Sim {
       if (j < 0) continue;
       const t = this.mat[j];
       if (t === WATER) {
+        this.quench++;
         this.set(i, STEAM);
         if (this.chance(0.3)) this.set(j, STEAM);
         return;
@@ -450,6 +468,7 @@ export class Sim {
     if (j < 0) return;
     const t = this.mat[j];
     if (t === WATER && this.chance(0.25)) {
+      this.quench++;
       this.life[i] = 0;
       this.set(j, STEAM);
       return;
@@ -495,6 +514,7 @@ export class Sim {
       const t = this.mat[j];
       if (t === WATER) {
         // Hardens over a few steps rather than instantly, so lava can sink through a pool.
+        this.quench++;
         if (this.chance(0.07)) {
           this.set(i, ROCK);
           this.set(j, STEAM);
@@ -574,6 +594,7 @@ export class Sim {
     if (j >= 0) {
       const t = this.mat[j];
       if (t === WATER) {
+        this.quench++;
         this.set(i, STEAM, this.randInt(40, 80));
         return;
       }

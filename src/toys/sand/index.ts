@@ -1,4 +1,5 @@
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
+import type { Loop } from '../../shell/sound';
 import { SandRenderer } from './render';
 import * as M from './sim';
 import { Sim } from './sim';
@@ -55,6 +56,14 @@ class Alchemy implements ToyInstance {
   private shake = 0;
   private statusTimer = 0;
   private simMs = 0;
+  // Sound beds: the brush's pour by material, and the scene's fire, lava and steam from sim counts.
+  private grains: Loop;
+  private liquid: Loop;
+  private fireBed: Loop;
+  private lavaBed: Loop;
+  private steamBed: Loop;
+  private hot = 0;
+  private strokeTick = 0;
 
   readonly cfg = {
     brush: 4,
@@ -65,6 +74,11 @@ class Alchemy implements ToyInstance {
   };
 
   constructor(private ctx: ToyContext) {
+    this.grains = ctx.sound.loop('trickle');
+    this.liquid = ctx.sound.loop('bubble');
+    this.fireBed = ctx.sound.loop('crackle');
+    this.lavaBed = ctx.sound.loop('rumble');
+    this.steamBed = ctx.sound.loop('hiss');
     this.renderer = new SandRenderer(ctx.canvas);
     this.width = ctx.canvas.width;
     this.height = ctx.canvas.height;
@@ -189,6 +203,9 @@ class Alchemy implements ToyInstance {
   frame(dt: number, t: number) {
     const s = this.sim;
     const r = this.cfg.brush;
+    let pour = 0;
+    let stroke = 0;
+    let px0 = 0;
     for (const p of this.ctx.pointers.active.values()) {
       const x = p.x * s.w;
       const y = p.y * s.h;
@@ -197,15 +214,31 @@ class Alchemy implements ToyInstance {
       const py = y - p.dy * s.h;
       const steps = Math.max(1, Math.ceil(Math.hypot(x - px, y - py) / Math.max(1, r * 0.5)));
       for (let k = 1; k <= steps; k++) s.paint(px + ((x - px) * k) / steps, py + ((y - py) * k) / steps, r, this.tool);
-      if (p.justDown) this.ctx.haptic('light');
+      if (p.justDown) {
+        this.ctx.haptic('light');
+        this.brushDown(p.x);
+      }
+      pour = Math.max(pour, 0.5 + Math.min(0.5, Math.hypot(p.dx, p.dy) * 30));
+      stroke += Math.hypot(x - px, y - py);
+      px0 = p.x;
     }
+    this.brushSound(dt, pour, stroke, px0);
 
     let booms = 0;
+    let boomSize = 0;
+    let flames = 0;
+    let molten = 0;
+    let quench = 0;
     const t0 = performance.now();
     for (let k = 0; k < this.cfg.speed; k++) {
       s.step();
       booms += s.booms;
+      boomSize = Math.max(boomSize, s.boomSize);
+      flames += s.flames;
+      molten += s.molten;
+      quench += s.quench;
     }
+    this.sceneSound(dt, flames / this.cfg.speed, molten / this.cfg.speed, quench / this.cfg.speed, booms, boomSize);
     this.simMs += (performance.now() - t0 - this.simMs) * 0.1;
     if (booms > 0) {
       this.flash = Math.min(0.75, this.flash + 0.2 * booms);
@@ -234,6 +267,57 @@ class Alchemy implements ToyInstance {
     }
   }
 
+  // ---------------------------------------------------------------- sound
+
+  /** A tap of the brush: a little onset that says what you picked up. */
+  private brushDown(u: number) {
+    const pan = (u - 0.5) * 1.2;
+    const m = this.tool;
+    if (m === M.SAND || m === M.POWDER) this.ctx.sound.play('crumble', { gain: 0.3, pitch: m === M.POWDER ? 0.8 : 1.1, pan });
+    else if (m === M.WATER || m === M.OIL || m === M.ACID) this.ctx.sound.play('plop', { gain: 0.35, pitch: m === M.OIL ? 0.7 : 1, pan });
+    else if (m === M.FIRE || m === M.LAVA) this.ctx.sound.play('sizzle', { gain: 0.3, pitch: m === M.LAVA ? 0.6 : 1, pan });
+    else if (m === M.STEAM || m === M.EMPTY) this.ctx.sound.play('whoosh', { gain: 0.25, pitch: 1.3, pan });
+    else if (m === M.PLANT) this.ctx.sound.play('pop', { gain: 0.25, pitch: 1.6, pan });
+    else this.ctx.sound.play('knock', { gain: 0.35, pitch: m === M.ICE ? 1.6 : m === M.WOOD ? 1 : 0.7, pan });
+  }
+
+  /** Loops that follow the brush: grains trickle, liquids burble, solids tick as they are laid. */
+  private brushSound(dt: number, pour: number, stroke: number, u: number) {
+    const m = this.tool;
+    const grain = m === M.SAND || m === M.POWDER;
+    const wet = m === M.WATER || m === M.OIL || m === M.ACID;
+    this.grains.set(grain ? pour * 0.7 : 0, m === M.POWDER ? 0.35 : 0.65);
+    this.liquid.set(wet ? pour * 0.6 : 0, m === M.OIL ? 0.15 : m === M.ACID ? 0.85 : 0.5);
+    // Painting fire, lava or steam leans on the scene beds below; mark it so they swell at once.
+    if (pour > 0 && (m === M.FIRE || m === M.LAVA || m === M.STEAM)) this.hot = Math.max(this.hot, 0.5);
+    // Solids and the eraser: a soft tick every few cells of stroke.
+    if (m === M.WALL || m === M.WOOD || m === M.ICE || m === M.PLANT || m === M.EMPTY) {
+      this.strokeTick += stroke;
+      if (this.strokeTick > 14) {
+        this.strokeTick = 0;
+        this.ctx.sound.play('tick', { gain: 0.25, pitch: m === M.ICE ? 1.8 : m === M.EMPTY ? 1.3 : 0.9, pan: (u - 0.5) * 1.2 });
+      }
+    }
+    this.hot *= Math.exp(-dt * 3);
+  }
+
+  /** Beds from what the sim is doing this frame: fire crackles, lava rumbles, quenching hisses. */
+  private sceneSound(dt: number, flames: number, molten: number, quench: number, booms: number, boomSize: number) {
+    const m = this.tool;
+    const painting = this.hot > 0.05;
+    this.fireBed.set(Math.min(1, Math.sqrt(flames / 700) + (painting && m === M.FIRE ? this.hot * 0.4 : 0)), 0.4 + Math.min(0.5, flames / 3000));
+    this.lavaBed.set(Math.min(0.7, Math.sqrt(molten / 1500) * 0.7 + (painting && m === M.LAVA ? this.hot * 0.3 : 0)), 0.3);
+    this.steamBed.set(Math.min(1, Math.sqrt(quench / 60) + (painting && m === M.STEAM ? this.hot * 0.5 : 0)), 0.6);
+    // A burst of quenching gets a sharp sizzle on top of the hiss.
+    if (quench > 25 && Math.random() < dt * 6) this.ctx.sound.play('sizzle', { gain: Math.min(0.8, quench / 150) });
+    if (booms > 0) {
+      const big = Math.min(1, (boomSize - 4) / 6);
+      this.ctx.sound.play('thud', { pitch: 0.55 + (1 - big) * 0.3, gain: Math.min(1, 0.5 + booms * 0.15) });
+      this.ctx.sound.play('snap', { pitch: 0.7 + Math.random() * 0.4, gain: Math.min(0.9, 0.4 + booms * 0.1) });
+      if (booms > 1) this.ctx.sound.play('crumble', { pitch: 0.7, gain: 0.5 });
+    }
+  }
+
   resize(width: number, height: number) {
     if (width === this.width && height === this.height) return;
     this.width = width;
@@ -242,6 +326,11 @@ class Alchemy implements ToyInstance {
   }
 
   destroy() {
+    this.grains.stop();
+    this.liquid.stop();
+    this.fireBed.stop();
+    this.lavaBed.stop();
+    this.steamBed.stop();
     this.dock.remove();
     this.renderer.destroy();
   }

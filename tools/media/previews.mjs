@@ -3,9 +3,9 @@
 import { chromium } from 'playwright';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 
-const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar'];
+const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool'];
 // Where in each 8 s capture the most telling 3 s are (seconds from capture start).
-const START = { laundry: 4.6, thread: 2.2, demolition: 3.2, merge: 3.5, rinse: 4.5 };
+const START = { laundry: 4.6, thread: 2.2, demolition: 3.2, merge: 3.5, rinse: 4.5, spool: 2.5 };
 const out = '../../src/previews';
 mkdirSync(out, { recursive: true });
 const b = await chromium.launch({ channel: 'chrome' });

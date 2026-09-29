@@ -1,5 +1,6 @@
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
 import { Program, compile, createDouble, createTarget, destroyTarget, gridSize, type DoubleTarget, type Target } from '../../shell/gl';
+import type { Loop } from '../../shell/sound';
 import * as S from './shaders';
 
 type Mode = 'neon' | 'paint';
@@ -78,6 +79,12 @@ class Ink implements ToyInstance {
   private pointerColor = new Map<number, [number, number, number]>();
   private idle = 0;
   private hue = Math.random();
+  // Sound: a hiss bed that follows how hard the fluid is being stirred, with a slow tail so it
+  // settles with the swirl rather than cutting out on release.
+  private flow: Loop;
+  private stir = 0;
+  private strokeSpeed = 0;
+  private flickCool = 0;
 
   readonly cfg = {
     mode: 'neon' as Mode,
@@ -104,6 +111,7 @@ class Ink implements ToyInstance {
     }
     gl.getExtension('OES_texture_float_linear');
     this.gl = gl;
+    this.flow = ctx.sound.loop('hiss');
 
     // Phones get a smaller dye buffer; the difference is invisible at arm's length.
     if (Math.min(screen.width, screen.height) < 500) this.cfg.dyeRes = 512;
@@ -239,6 +247,7 @@ class Ink implements ToyInstance {
     const touching = this.ctx.pointers.active.size > 0;
     this.idle = touching ? 0 : this.idle + dt;
     this.handleInput();
+    this.updateSound(dt);
     // Attract mode: keep the screen alive when nobody is touching it.
     if (this.idle > 5 && Math.random() < dt * 0.6) this.randomSplats(1);
     this.step(dt);
@@ -247,6 +256,7 @@ class Ink implements ToyInstance {
 
   private handleInput() {
     const aspect = this.width / this.height;
+    this.strokeSpeed = 0;
     for (const p of this.ctx.pointers.active.values()) {
       if (p.justDown) {
         this.pointerColor.set(p.id, this.pickColor());
@@ -257,6 +267,7 @@ class Ink implements ToyInstance {
           this.splat(p.x, p.y, Math.cos(a) * 400, Math.sin(a) * 400, col.map((v) => v * 0.25) as [number, number, number]);
         }
         this.ctx.haptic('light');
+        this.ctx.sound.play('plop', { pitch: 0.8 + Math.random() * 0.5, gain: 0.45, pan: (p.x - 0.5) * 1.2 });
       }
       let col = this.pointerColor.get(p.id);
       if (!col) this.pointerColor.set(p.id, (col = this.pickColor()));
@@ -264,6 +275,12 @@ class Ink implements ToyInstance {
       const dx = p.dx * (aspect < 1 ? aspect : 1);
       const dy = p.dy / (aspect > 1 ? aspect : 1);
       const speed = Math.hypot(dx, dy);
+      this.strokeSpeed = Math.max(this.strokeSpeed, speed);
+      if (speed > 0.06 && this.flickCool <= 0) {
+        // A fast flick gets an airy swish on top of the bed.
+        this.ctx.sound.play('whoosh', { pitch: 1.2 + Math.min(speed, 0.2) * 2, gain: Math.min(0.4, speed * 3), pan: (p.x - 0.5) * 1.2 });
+        this.flickCool = 0.3;
+      }
       if (speed > 0) {
         this.splat(p.x, p.y, dx * this.cfg.force, dy * this.cfg.force, col);
         if (speed > 0.04) this.ctx.haptic('light');
@@ -273,6 +290,15 @@ class Ink implements ToyInstance {
       }
     }
     for (const id of this.pointerColor.keys()) if (!this.ctx.pointers.active.has(id)) this.pointerColor.delete(id);
+  }
+
+  private updateSound(dt: number) {
+    this.flickCool -= dt;
+    // Per-frame UV movement → speed per second; attack fast, release over ~1s.
+    const target = Math.min(1, (this.strokeSpeed / Math.max(dt, 1e-3)) / 3);
+    const k = target > this.stir ? 1 - Math.exp(-dt * 12) : 1 - Math.exp(-dt * 2.5);
+    this.stir += (target - this.stir) * k;
+    this.flow.set(this.stir * 0.35, 0.25 + this.stir * 0.6);
   }
 
   private pickColor(): [number, number, number] {
@@ -478,6 +504,7 @@ class Ink implements ToyInstance {
   }
 
   destroy() {
+    this.flow.stop();
     this.release();
     this.dock.remove();
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();

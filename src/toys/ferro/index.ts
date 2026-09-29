@@ -2,6 +2,7 @@ import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
 import { lookAt, multiply, normalize, perspective, type Mat4, type Vec3 } from '../cloth/math';
 import { Ferro, type Magnet } from './sim';
 import { FerroRenderer, type Theme } from './render';
+import type { Loop } from '../../shell/sound';
 
 export const ferroToy: Toy = {
   id: 'ferro',
@@ -59,6 +60,12 @@ class FerroBlob implements ToyInstance {
   private eye: Vec3 = [0, 2, 2];
   private fingers = new Map<number, Finger>();
   private tickClock = 0;
+  // Sound: a low magnetic hum that swells with field strength and spike count and brightens
+  // as the magnet moves; squishes as spikes bristle up or slump back.
+  private hum: Loop;
+  private motion = 0;
+  private lastSpikes = 0;
+  private lastDropX = 0;
 
   readonly cfg = {
     theme: 'chrome' as Theme,
@@ -75,6 +82,7 @@ class FerroBlob implements ToyInstance {
     if (!gl) throw new Error('WebGL2 is not available on this device.');
     if (!gl.getExtension('EXT_color_buffer_half_float')) gl.getExtension('EXT_color_buffer_float');
     this.gl = gl;
+    this.hum = ctx.sound.loop('rumble');
     this.renderer = new FerroRenderer(gl);
     this.width = ctx.canvas.width;
     this.height = ctx.canvas.height;
@@ -155,6 +163,7 @@ class FerroBlob implements ToyInstance {
 
   frame(dt: number, t: number) {
     const ptrs = this.ctx.pointers.active;
+    let travel = 0;
     for (const p of ptrs.values()) {
       const [x, z] = this.toDish(p.x, p.y);
       let f = this.fingers.get(p.id);
@@ -163,7 +172,9 @@ class FerroBlob implements ToyInstance {
         this.fingers.set(p.id, f);
         this.ctx.haptic('light');
       }
-      f.moved += Math.hypot(x - f.magnet.x, z - f.magnet.z);
+      const step = Math.hypot(x - f.magnet.x, z - f.magnet.z);
+      f.moved += step;
+      travel += step;
       f.magnet.x = x;
       f.magnet.z = z;
       // Holding builds the field up; it eases in so spikes rise rather than pop instantly.
@@ -173,7 +184,10 @@ class FerroBlob implements ToyInstance {
     for (const [id, f] of [...this.fingers]) {
       if (ptrs.has(id)) continue;
       // A quick still tap drips more ferrofluid in.
-      if (t - f.born < 0.25 && f.moved < 0.05) this.sim.dropAt(f.magnet.x, f.magnet.z);
+      if (t - f.born < 0.25 && f.moved < 0.05) {
+        this.sim.dropAt(f.magnet.x, f.magnet.z);
+        this.lastDropX = f.magnet.x;
+      }
       this.fingers.delete(id);
     }
     const magnets = [...this.fingers.values()].map((f) => f.magnet);
@@ -182,11 +196,34 @@ class FerroBlob implements ToyInstance {
     const ms = performance.now() - t0;
 
     this.tickClock += dt;
-    if (this.sim.landedThisFrame) this.ctx.haptic('medium');
-    else if (this.sim.snapsThisFrame >= 2 && this.tickClock > 0.06) {
+    const snaps = this.sim.snapsThisFrame;
+    if (this.sim.landedThisFrame) {
+      this.ctx.haptic('medium');
+      // A heavy, thick blob landing: low plop with a wet squelch under it.
+      this.ctx.sound.play('plop', { pitch: 0.55, gain: 0.7, pan: this.lastDropX * 0.8 });
+      this.ctx.sound.play('squish', { pitch: 0.7, gain: 0.5, pan: this.lastDropX * 0.8 });
+    } else if (snaps >= 2 && this.tickClock > 0.06) {
       this.tickClock = 0;
-      this.ctx.haptic(this.sim.snapsThisFrame > 8 ? 'medium' : 'light');
+      this.ctx.haptic(snaps > 8 ? 'medium' : 'light');
+      // Spikes bristling up: a tight, high squish, fuller when many rise at once.
+      this.ctx.sound.play('squish', { pitch: 1.6 - Math.min(snaps, 20) * 0.03, gain: Math.min(0.6, 0.15 + snaps * 0.03), pan: this.magnetPan() });
     }
+
+    let spikes = 0;
+    for (let i = 0; i < this.sim.nCells; i++) if (this.sim.amp[i] > 0.03) spikes++;
+    // Many spikes vanishing at once (magnet lifted) slump back with a low squelch.
+    const lost = this.lastSpikes - spikes;
+    if (lost > 6 && this.tickClock > 0.06) {
+      this.tickClock = 0;
+      this.ctx.sound.play('squish', { pitch: 0.6, gain: Math.min(0.5, lost * 0.03) });
+    }
+    this.lastSpikes = spikes;
+    let field = 0;
+    for (const m of magnets) field += m.strength;
+    this.motion += (Math.min(1, travel / Math.max(dt, 1e-3) / 2) - this.motion) * Math.min(1, dt * 6);
+    // Only a held magnet hums; the resting dish (base magnet alone) stays silent.
+    const level = magnets.length ? Math.min(1, field * 0.2 + Math.min(1, spikes / 40) * 0.25 + this.motion * 0.3) : 0;
+    this.hum.set(level * 0.45, 0.15 + this.motion * 0.5);
 
     this.renderer.draw(
       this.sim,
@@ -202,9 +239,13 @@ class FerroBlob implements ToyInstance {
       this.cfg.theme,
       t,
     );
-    let spikes = 0;
-    for (let i = 0; i < this.sim.nCells; i++) if (this.sim.amp[i] > 0.03) spikes++;
     this.ctx.setStatus(`${this.sim.n} particles · ${spikes} spikes · sim ${ms.toFixed(1)}ms`);
+  }
+
+  private magnetPan() {
+    let x = 0;
+    for (const f of this.fingers.values()) x += f.magnet.x;
+    return this.fingers.size ? (x / this.fingers.size) * 0.8 : 0;
   }
 
   resize(width: number, height: number) {
@@ -214,6 +255,7 @@ class FerroBlob implements ToyInstance {
   }
 
   destroy() {
+    this.hum.stop();
     this.renderer.destroy();
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();
   }

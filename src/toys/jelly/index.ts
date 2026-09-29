@@ -61,6 +61,10 @@ interface Touch {
   ly: number;
   t: number;
   travel: number;
+  /** Smoothed finger speed (world units/s), for the fling whoosh on release. */
+  speed: number;
+  /** Time of the last slap sound, so a long swipe doesn't machine-gun. */
+  slapAt: number;
 }
 
 class JellyStack implements ToyInstance {
@@ -208,6 +212,7 @@ class JellyStack implements ToyInstance {
       top = this.place(s, w.wW / 2, top) + 0.004;
     }
     this.ctx.haptic('medium');
+    this.ctx.sound.play('boing', { pitch: 0.7, gain: 0.6 });
   }
 
   // ---------------------------------------------------------------- frame
@@ -236,10 +241,11 @@ class JellyStack implements ToyInstance {
       let t = this.touches.get(p.id);
       if (!t) {
         const bi = w.pick(x, y, 0.035);
-        t = { mode: bi >= 0 ? 'grab' : 'swipe', sx: x, sy: y, lx: x, ly: y, t: 0, travel: 0 };
+        t = { mode: bi >= 0 ? 'grab' : 'swipe', sx: x, sy: y, lx: x, ly: y, t: 0, travel: 0, speed: 0, slapAt: -1 };
         if (bi >= 0) {
           t.handle = w.grab(bi, x, y);
           this.ctx.haptic('light');
+          this.ctx.sound.play('squish', { pitch: this.sizePitch(w.bodies[bi].halfHeight) * 1.1, gain: 0.55, pan: this.pan(x) });
         }
         this.touches.set(p.id, t);
       }
@@ -248,6 +254,7 @@ class JellyStack implements ToyInstance {
       const moved = Math.hypot(mx, my);
       t.travel += moved;
       t.t += dt;
+      t.speed += (moved / Math.max(dt, 1e-3) - t.speed) * Math.min(1, dt * 20);
       if (t.mode === 'grab' && t.handle) {
         t.handle.tx = x;
         t.handle.ty = y;
@@ -258,6 +265,12 @@ class JellyStack implements ToyInstance {
           const k = Math.min(speed, 10) * 0.8;
           const hit = w.slap(x, y, (mx / moved) * k, (my / moved) * k, 0.09);
           if (hit > 6) this.ctx.haptic(speed > 5 ? 'medium' : 'light');
+          if (hit > 6 && this.time - t.slapAt > 0.15) {
+            t.slapAt = this.time;
+            const g = Math.min(1, speed / 7);
+            this.ctx.sound.play('squish', { pitch: 0.8 + g * 0.3, gain: 0.4 + g * 0.5, pan: this.pan(x) });
+            if (speed > 4) this.ctx.sound.play('whoosh', { pitch: 0.9 + g * 0.4, gain: g * 0.5, pan: this.pan(x) });
+          }
         }
       }
       t.lx = x;
@@ -266,7 +279,11 @@ class JellyStack implements ToyInstance {
     for (const [id, t] of [...this.touches]) {
       if (this.ctx.pointers.active.has(id)) continue;
       this.touches.delete(id);
-      if (t.handle) w.release(t.handle);
+      if (t.handle) {
+        w.release(t.handle);
+        // A fast release is a fling: a puff of air behind it.
+        if (t.speed > 2.5) this.ctx.sound.play('whoosh', { pitch: 0.8 + Math.min(t.speed, 10) * 0.05, gain: Math.min(0.7, t.speed / 10), pan: this.pan(t.lx) });
+      }
       else if (t.t < 0.35 && t.travel < 0.03) this.spawnAt(t.sx, t.sy);
     }
   }
@@ -297,14 +314,17 @@ class JellyStack implements ToyInstance {
       w.vel[i * 2 + 1] += b.q[k * 2 + 1] * 3;
     }
     this.ctx.haptic('light');
+    this.ctx.sound.play('plop', { pitch: this.sizePitch(b.halfHeight), gain: 0.35, pan: this.pan(b.cx) });
   }
 
   /** Impacts become haptics, dust on the table and sparkles on the big ones. */
   private react() {
     const w = this.world;
     let strongest = 0;
+    let loud: (typeof w.impacts)[number] | null = null;
     for (const im of w.impacts) {
       strongest = Math.max(strongest, im.strength);
+      if (!loud || im.strength > loud.strength) loud = im;
       if (im.ground && im.strength > 0.9) {
         const n = Math.min(10, Math.round(im.strength * 3));
         for (let k = 0; k < n; k++) {
@@ -339,7 +359,23 @@ class JellyStack implements ToyInstance {
     if (strongest > 2.6) this.ctx.haptic('heavy');
     else if (strongest > 1.4) this.ctx.haptic('medium');
     else if (strongest > 0.7) this.ctx.haptic('light');
+    // One sound per frame for the hardest hit: a boing pitched by size, plus a thud under the big ones.
+    if (loud && loud.strength > 0.7) {
+      const p = this.sizePitch(loud.size);
+      this.ctx.sound.play('boing', { pitch: p, gain: Math.min(1, (loud.strength - 0.4) / 2.5), pan: this.pan(loud.x) });
+      if (loud.strength > 2.2) this.ctx.sound.play('thud', { pitch: p * 0.9, gain: Math.min(1, (loud.strength - 1.6) / 2.5), pan: this.pan(loud.x) });
+    }
     w.impacts.length = 0;
+  }
+
+  /** Bigger jellies sound lower. */
+  private sizePitch(halfHeight: number) {
+    return Math.min(1.8, Math.max(0.6, 0.1 / halfHeight));
+  }
+
+  /** Stereo position for a world x. */
+  private pan(x: number) {
+    return (x / this.world.wW - 0.5) * 1.2;
   }
 
   private stepFx(dt: number) {

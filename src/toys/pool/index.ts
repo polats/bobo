@@ -1,5 +1,6 @@
 import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
 import { Program, compile, createDouble, createTarget, destroyTarget, gridSize, type DoubleTarget, type Target } from '../../shell/gl';
+import type { Loop } from '../../shell/sound';
 import * as S from './shaders';
 
 export const poolToy: Toy = {
@@ -72,6 +73,12 @@ class Pool implements ToyInstance {
   private world: [number, number] = [1, 1];
   private rainClock = 0;
   private lastDrop = new Map<number, { x: number; y: number }>();
+  // Sound: a bubbly wake bed while a finger drags through the water, a trickle bed for rain.
+  private wakeLoop: Loop;
+  private rainLoop: Loop;
+  private wakeLevel = 0;
+  private dragDist = 0;
+  private bumpCool = 0;
 
   readonly cfg = {
     theme: 'day' as Theme,
@@ -98,6 +105,8 @@ class Pool implements ToyInstance {
     }
     gl.getExtension('OES_texture_float_linear');
     this.gl = gl;
+    this.wakeLoop = ctx.sound.loop('bubble');
+    this.rainLoop = ctx.sound.loop('trickle');
 
     const quadVert = compile(gl, gl.VERTEX_SHADER, S.quadVert);
     this.p = {
@@ -266,10 +275,15 @@ class Pool implements ToyInstance {
       this.rainClock += dt * this.cfg.rainRate;
       while (this.rainClock >= 1) {
         this.rainClock -= 1;
-        this.drop(Math.random(), Math.random(), 0.012 + Math.random() * 0.01, -0.004 - Math.random() * 0.004, false);
+        const x = Math.random();
+        this.drop(x, Math.random(), 0.012 + Math.random() * 0.01, -0.004 - Math.random() * 0.004, false);
+        // Only a few audible plips a second on top of the bed, however heavy the rain.
+        if (Math.random() < 4 / this.cfg.rainRate) this.ctx.sound.play('plop', { pitch: 1.6 + Math.random() * 0.8, gain: 0.15, pan: this.pan(x) });
       }
     }
+    this.rainLoop.set(this.cfg.rain ? 0.12 + Math.min(1, this.cfg.rainRate / 60) * 0.3 : 0, 0.4 + Math.min(1, this.cfg.rainRate / 60) * 0.4);
     this.updateDucks(dt);
+    this.updateSound(dt);
     this.simulate(t);
     this.renderCaustics();
     this.render(t);
@@ -285,13 +299,22 @@ class Pool implements ToyInstance {
           duck.grabbedBy = p.id;
           duck.squashV += 6;
           this.ctx.haptic('medium');
+          // Rubber squeak: a high, short squish, smaller ducks squeak higher.
+          this.ctx.sound.play('squish', { pitch: 1.8 * (0.05 / duck.r), gain: 0.5, pan: this.pan(duck.x) });
           continue;
         }
         this.drop(p.x, p.y, c.dropSize, -c.dropStrength);
         this.lastDrop.set(p.id, { x: p.x, y: p.y });
         this.ctx.haptic('light');
+        // Bigger pokes plop lower; stronger pokes plop louder and turn into a splash.
+        const size = c.dropSize / 0.035;
+        const force = c.dropStrength / 0.012;
+        this.ctx.sound.play('plop', { pitch: 1.1 / Math.sqrt(size), gain: Math.min(1, 0.35 + force * 0.25), pan: this.pan(p.x) });
+        if (force * size > 2) this.ctx.sound.play('splash', { pitch: 1 / Math.sqrt(size), gain: Math.min(0.8, force * size * 0.15), pan: this.pan(p.x) });
         continue;
       }
+      // Dragging a duck churns the water too, so both count toward the wake bed.
+      this.dragDist += Math.hypot(p.dx * wx, p.dy * wy);
       const grabbed = this.ducks.find((d) => d.grabbedBy === p.id);
       if (grabbed) {
         grabbed.x = clamp(p.x, 0.02, 0.98);
@@ -321,8 +344,32 @@ class Pool implements ToyInstance {
       // Released: a splash where it lands.
       this.drop(d.x, d.y, d.r * 1.4, -this.cfg.dropStrength * (0.6 + Math.min(speed, 2)), false);
       d.squashV -= 8;
+      // Thrown ducks land with a splash; a gentle drop is just a plop.
+      if (speed > 0.6) this.ctx.sound.play('splash', { pitch: 1.2 - Math.min(speed, 3) * 0.1, gain: Math.min(1, 0.3 + speed * 0.2), pan: this.pan(d.x) });
+      else this.ctx.sound.play('plop', { pitch: 0.8, gain: 0.5, pan: this.pan(d.x) });
     }
     for (const id of this.lastDrop.keys()) if (!this.ctx.pointers.active.has(id)) this.lastDrop.delete(id);
+  }
+
+  private updateSound(dt: number) {
+    this.bumpCool -= dt;
+    // Finger distance through the water per second drives the wake bed; fast release so it
+    // stops when the finger stops.
+    const target = Math.min(1, this.dragDist / Math.max(dt, 1e-3) / 2.5);
+    this.dragDist = 0;
+    this.wakeLevel += (target - this.wakeLevel) * (1 - Math.exp(-dt * (target > this.wakeLevel ? 10 : 4)));
+    this.wakeLoop.set(this.wakeLevel * 0.5, 0.3 + this.wakeLevel * 0.6);
+  }
+
+  /** A soft rubbery bump, at most a few per second across all ducks. */
+  private bump(x: number, strength: number) {
+    if (this.bumpCool > 0 || strength < 0.15) return;
+    this.bumpCool = 0.18;
+    this.ctx.sound.play('boing', { pitch: 1.4, gain: Math.min(0.5, strength * 0.6), pan: this.pan(x) });
+  }
+
+  private pan(x: number) {
+    return (x - 0.5) * 1.2;
   }
 
   private duckAt(x: number, y: number) {
@@ -356,10 +403,10 @@ class Pool implements ToyInstance {
       d.vy += Math.cos(performance.now() * 0.00023 + d.r * 555) * 0.004 * dt;
       const rx = d.r / wx;
       const ry = d.r / wy;
-      if (d.x < rx) { d.x = rx; d.vx = Math.abs(d.vx) * 0.6; d.squashV += 3; }
-      if (d.x > 1 - rx) { d.x = 1 - rx; d.vx = -Math.abs(d.vx) * 0.6; d.squashV += 3; }
-      if (d.y < ry) { d.y = ry; d.vy = Math.abs(d.vy) * 0.6; d.squashV += 3; }
-      if (d.y > 1 - ry) { d.y = 1 - ry; d.vy = -Math.abs(d.vy) * 0.6; d.squashV += 3; }
+      if (d.x < rx) { d.x = rx; this.bump(d.x, Math.abs(d.vx)); d.vx = Math.abs(d.vx) * 0.6; d.squashV += 3; }
+      if (d.x > 1 - rx) { d.x = 1 - rx; this.bump(d.x, Math.abs(d.vx)); d.vx = -Math.abs(d.vx) * 0.6; d.squashV += 3; }
+      if (d.y < ry) { d.y = ry; this.bump(d.x, Math.abs(d.vy)); d.vy = Math.abs(d.vy) * 0.6; d.squashV += 3; }
+      if (d.y > 1 - ry) { d.y = 1 - ry; this.bump(d.x, Math.abs(d.vy)); d.vy = -Math.abs(d.vy) * 0.6; d.squashV += 3; }
       // Turn to face the direction of travel.
       const speed = Math.hypot(d.vx * wx, d.vy * wy);
       if (speed > 0.01) {
@@ -392,7 +439,11 @@ class Pool implements ToyInstance {
           const ny = dy / dist;
           if (a.grabbedBy === null) { a.x -= (nx * push) / wx; a.y -= (ny * push) / wy; a.vx -= nx * 0.3 * push * 30; a.vy -= ny * 0.3 * push * 30; }
           if (b.grabbedBy === null) { b.x += (nx * push) / wx; b.y += (ny * push) / wy; b.vx += nx * 0.3 * push * 30; b.vy += ny * 0.3 * push * 30; }
-          if (push > 0.004) { a.squashV += 2; b.squashV += 2; }
+          if (push > 0.004) {
+            a.squashV += 2;
+            b.squashV += 2;
+            this.bump((a.x + b.x) / 2, Math.hypot(a.vx - b.vx, a.vy - b.vy));
+          }
         }
       }
   }
@@ -565,6 +616,8 @@ class Pool implements ToyInstance {
   }
 
   destroy() {
+    this.wakeLoop.stop();
+    this.rainLoop.stop();
     this.release();
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();
   }

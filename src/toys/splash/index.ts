@@ -53,6 +53,8 @@ interface Ball {
   r: number;
   spin: number;
   seed: number;
+  /** Was the ball touching water last frame (so entering it can splash once). */
+  wet: boolean;
 }
 
 interface Grab {
@@ -402,8 +404,10 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
       r,
       spin: Math.random() * 6,
       seed: Math.floor(Math.random() * 6),
+      wet: false,
     });
     ctx.haptic('light');
+    ctx.sound.play('whoosh', { pitch: 1.3, gain: 0.25, pan: panX(balls[balls.length - 1].pos[0]) });
   }
 
   const dock = document.createElement('div');
@@ -424,6 +428,9 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
     splashDir = [Math.cos(a) * 0.8, 1.6, Math.sin(a) * 0.5];
     splashKick = 0.14;
     ctx.haptic('heavy');
+    ctx.sound.play('splash', { pitch: 0.7, gain: 1 });
+    ctx.sound.play('whoosh', { pitch: 0.6, gain: 0.4 });
+    slosh = 1;
   }
 
   // ---------------------------------------------------------------- panel
@@ -521,7 +528,10 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
         const wet = hit[1] <= surfaceAt(hit[0], hit[2]) + 2.5;
         g = { mode: wet ? 'push' : 'tilt', pos: hit, prev: hit, vel: [0, 0, 0] };
         grabs.set(ptr.id, g);
-        if (wet) ctx.haptic('light');
+        if (wet) {
+          ctx.haptic('light');
+          ctx.sound.play('plop', { pitch: 0.9, gain: 0.4, pan: panX(hit[0]) });
+        }
       }
       if (g.mode === 'push') {
         g.prev = g.pos;
@@ -531,6 +541,7 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
         const sp = Math.hypot(v[0], v[1]);
         const vmax = 120;
         g.vel = sp > vmax ? [(v[0] * vmax) / sp, (v[1] * vmax) / sp, 0] : v;
+        churn = Math.max(churn, Math.min(sp, vmax) / vmax);
       } else {
         // Tilt the tank like a snow globe: sideways drag rolls it, vertical drag pitches it.
         tiltRoll = clamp(tiltRoll - ptr.dx * aspect * 2.4, -0.55, 0.55);
@@ -559,7 +570,14 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
       const shake = [motion[0] - motionLow[0], motion[1] - motionLow[1], motion[2] - motionLow[2]];
       const len = Math.hypot(...motionLow) || 1;
       g = [motionLow[0] / len + shake[0] * s.shake, motionLow[1] / len + shake[1] * s.shake, motionLow[2] / len + shake[2] * s.shake];
-      if (Math.hypot(...shake) > 0.8) ctx.haptic('light');
+      const jolt = Math.hypot(...shake);
+      if (jolt > 0.8) {
+        ctx.haptic('light');
+        if (sloshCool <= 0) {
+          sloshCool = 0.25;
+          ctx.sound.play('splash', { gain: Math.min(0.8, jolt * 0.4), pan: clamp(shake[0], -1, 1) * 0.6 });
+        }
+      }
     }
     // Screen-down seen through the tank's current tilt.
     const cr = Math.cos(tiltRoll);
@@ -605,6 +623,13 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
         }
       }
       const sub = wetN ? clamp((surface - (b.pos[1] - b.r)) / (2 * b.r), 0, 1) : 0;
+      // Hitting the water: splash scaled by how fast the ball was coming down.
+      if (sub > 0 && !b.wet && b.vel[1] < -8) {
+        const hit = Math.min(1, -b.vel[1] / 60);
+        ctx.sound.play('splash', { pitch: 1.3 - hit * 0.5, gain: 0.3 + hit * 0.6, pan: panX(b.pos[0]) });
+        if (hit > 0.4) ctx.haptic('medium');
+      }
+      b.wet = sub > 0;
       // Light ball: buoyancy up to 2.5x its weight, dragged along by the water it sits in.
       const buoy = 1 - sub * 2.5;
       for (let i = 0; i < 3; i++) {
@@ -615,10 +640,13 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
       for (let i = 0; i < 3; i++) b.pos[i] += b.vel[i] * dt;
       const lo = 2 + b.r;
       const hi = [x1 - b.r, y1 + 4 - b.r, z1 - b.r];
+      let knock = 0;
       for (let i = 0; i < 3; i++) {
-        if (b.pos[i] < lo) { b.pos[i] = lo; b.vel[i] = Math.abs(b.vel[i]) * 0.4; }
-        if (b.pos[i] > hi[i]) { b.pos[i] = hi[i]; b.vel[i] = -Math.abs(b.vel[i]) * 0.4; }
+        if (b.pos[i] < lo) { knock = Math.max(knock, -b.vel[i]); b.pos[i] = lo; b.vel[i] = Math.abs(b.vel[i]) * 0.4; }
+        if (b.pos[i] > hi[i]) { knock = Math.max(knock, b.vel[i]); b.pos[i] = hi[i]; b.vel[i] = -Math.abs(b.vel[i]) * 0.4; }
       }
+      // A hollow beach ball bonking the glass.
+      if (knock > 12) ctx.sound.play('thud', { pitch: 1.5, gain: Math.min(0.6, knock / 80), pan: panX(b.pos[0]) });
       b.spin += (b.vel[0] / b.r) * dt * 0.8;
     }
     // Balls bump each other.
@@ -702,6 +730,35 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
   }
 
   let waterLevel = 0;
+  // ---------------------------------------------------------------- sound
+  let surfaceFlow = 0;
+  let churn = 0;
+  let slosh = 0;
+  let flowLevel = 0;
+  let sloshCool = 0;
+  let lastTilt = 0;
+  const panX = (x: number) => ((x - 2) / Math.max(1, gx - 4) - 0.5) * 1.2;
+
+  function updateSound(dt: number) {
+    // Tilt swinging (dragged or springing back) sloshes too, known without any readback.
+    const tilt = Math.hypot(tiltRoll, tiltPitch);
+    const swing = Math.min(1, Math.abs(tilt - lastTilt) / Math.max(dt, 1e-3) / 3);
+    lastTilt = tilt;
+    const target = Math.min(1, Math.max(surfaceFlow / 30, swing * 0.6, slosh));
+    flowLevel += (target - flowLevel) * (1 - Math.exp(-dt * (target > flowLevel ? 8 : 2)));
+    // Settled water sits below the floor so the bed goes fully quiet at rest.
+    const audible = Math.max(0, flowLevel - 0.1) / 0.9;
+    waterLoop.set(audible * 0.45, 0.3 + audible * 0.6);
+    churnLoop.set(churn * 0.4, 0.4 + churn * 0.5);
+    // A sudden surge in surface speed reads as a slosh hitting the wall.
+    sloshCool -= dt;
+    if (surfaceFlow / 30 > 0.55 && target > flowLevel + 0.2 && sloshCool <= 0) {
+      sloshCool = 0.5;
+      ctx.sound.play('splash', { pitch: 0.9, gain: Math.min(0.7, surfaceFlow / 60) });
+    }
+    slosh = Math.max(0, slosh - dt * 1.5);
+    churn = 0;
+  }
   function readColumns(i: number) {
     const buf = readback[i];
     readbackBusy[i] = true;
@@ -722,6 +779,10 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
             nWet++;
           }
         waterLevel = nWet ? sum / nWet : 0;
+        // Mean surface speed from the same readback drives the flowing-water bed.
+        let flow = 0;
+        for (let k = 0; k < columns.length; k += 4) if (columns[k] >= 0) flow += Math.hypot(columns[k + 1], columns[k + 2], columns[k + 3]);
+        surfaceFlow = nWet ? flow / nWet : 0;
       })
       .catch(() => {
         readbackBusy[i] = false;
@@ -764,11 +825,15 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
     };
   }
 
+  const waterLoop = ctx.sound.loop('trickle');
+  const churnLoop = ctx.sound.loop('bubble');
+
   return {
     frame(dt, t) {
       handleInput(dt);
       const g = gravityVector(dt);
       updateBalls(dt, g);
+      updateSound(dt);
       updateView();
       const steps = Math.round(s.substeps);
       const dtSub = 1 / 60 / steps;
@@ -854,6 +919,8 @@ async function create(ctx: ToyContext): Promise<ToyInstance> {
       buildTargets();
     },
     destroy() {
+      waterLoop.stop();
+      churnLoop.stop();
       removeEventListener('devicemotion', onMotion);
       dock.remove();
       hideTiltButton();

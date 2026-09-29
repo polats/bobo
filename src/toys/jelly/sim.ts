@@ -64,6 +64,8 @@ export interface Impact {
   y: number;
   strength: number;
   ground: boolean;
+  /** Half-height of the body that hit, for pitching its sound. */
+  size: number;
 }
 
 export interface Handle {
@@ -585,7 +587,7 @@ export class JellyWorld {
       vy /= b.count;
       const dv = Math.hypot(vx - b.vx, vy - b.vy);
       const ground = minY < this.groundY + this.r * 1.6;
-      if (dv > 0.55 && b.age > 0.3) this.impacts.push({ x: b.cx, y: ground ? this.groundY : minY, strength: dv, ground: ground && !b.onGround });
+      if (dv > 0.55 && b.age > 0.3) this.impacts.push({ x: b.cx, y: ground ? this.groundY : minY, strength: dv, ground: ground && !b.onGround, size: b.halfHeight });
       b.onGround = ground;
       b.minY = minY;
       this.jiggle(b, vx - b.vx, vy - b.vy, dt);
