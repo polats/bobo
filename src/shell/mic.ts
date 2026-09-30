@@ -126,7 +126,7 @@ class MicInput implements Mic {
     }
     const echo = this.leak * out.rms;
     const voiced = Math.sqrt(Math.max(0, f.rms * f.rms - 1.6 * echo * echo));
-    if (f.pitch > 0 && out.peakHz > 0 && out.peakShare > 0.2 && voiced < 0.7 * f.rms) {
+    if (f.pitch > 0 && out.peakHz > 0 && out.peakShare > 0.5 && voiced < 0.7 * f.rms) {
       const ratio = f.pitch / out.peakHz;
       const octave = Math.round(Math.log2(ratio));
       if (Math.abs(Math.log2(ratio) - octave) < 0.05 && Math.abs(octave) <= 1) f = { ...f, pitch: 0, clarity: Math.min(f.clarity, 0.5) };

@@ -174,23 +174,11 @@ function audio(): AudioContext | null {
   master = ctx.createGain();
   master.gain.value = enabled ? 0.8 : 0;
   master.connect(comp).connect(ctx.destination);
-  // A meter on what actually leaves the speaker: the mic's echo suppression compares against it.
-  meter = ctx.createAnalyser();
-  meter.fftSize = 2048;
-  meter.smoothingTimeConstant = 0;
-  comp.connect(meter);
-  // An analyser only runs when something downstream pulls on it: give it a silent path out.
-  const hush = ctx.createGain();
-  hush.gain.value = 0;
-  meter.connect(hush).connect(ctx.destination);
-  pool = new ResonatorPool(ctx, master);
+  pool = new ResonatorPool(ctx, master, comp);
   return ctx;
 }
 
 let pool: ResonatorPool | null = null;
-let meter: AnalyserNode | null = null;
-let meterTime: Float32Array<ArrayBuffer> | null = null;
-let meterFreq: Float32Array<ArrayBuffer> | null = null;
 
 /**
  * The shared audio graph, for toys that synthesise their own signal (a plate's modes, a glass's
@@ -208,21 +196,11 @@ export function audioOutput(): { ctx: AudioContext; bus: GainNode } | null {
 
 /** What the speaker is playing right now: RMS and the frequency of the loudest spectral peak. */
 export function outputNow(): { rms: number; peakHz: number; peakShare: number } {
-  if (!meter || !ctx) return { rms: 0, peakHz: 0, peakShare: 0 };
-  if (!meterTime) meterTime = new Float32Array(meter.fftSize);
-  if (!meterFreq) meterFreq = new Float32Array(meter.frequencyBinCount);
-  meter.getFloatTimeDomainData(meterTime);
-  let sum = 0;
-  for (let i = 0; i < meterTime.length; i++) sum += meterTime[i] * meterTime[i];
-  meter.getFloatFrequencyData(meterFreq);
-  let best = -Infinity, bi = 0, total = 0;
-  for (let i = 2; i < meterFreq.length; i++) {
-    const p = 10 ** (meterFreq[i] / 10);
-    total += p;
-    if (meterFreq[i] > best) [best, bi] = [meterFreq[i], i];
-  }
-  const share = total > 0 ? 10 ** (best / 10) / total : 0;
-  return { rms: Math.sqrt(sum / meterTime.length), peakHz: (bi * ctx.sampleRate) / meter.fftSize, peakShare: share };
+  // Measured on the audio thread by the pool's meter worklet: AnalyserNode reads silence in some
+  // WebViews (the Galaxy's, for one), so it isn't used here.
+  if (!pool?.ready) return { rms: 0, peakHz: 0, peakShare: 0 };
+  const m = pool.level;
+  return { rms: m.rms, peakHz: m.hz, peakShare: m.clarity };
 }
 let slipIds = 0;
 
@@ -657,4 +635,4 @@ const VOICES: Record<Voice, Synth> = {
 
 // Exposed for on-device debugging over the WebView inspector.
 (window as unknown as Record<string, unknown>).boboOutputNow = outputNow;
-(window as unknown as Record<string, unknown>).boboAudio = () => ({ state: ctx?.state, rate: ctx?.sampleRate, meter: !!meter, pool: pool?.ready });
+(window as unknown as Record<string, unknown>).boboAudio = () => ({ state: ctx?.state, rate: ctx?.sampleRate, pool: pool?.ready });

@@ -95,14 +95,65 @@ class Resonators extends AudioWorkletProcessor {
   }
 }
 registerProcessor('bobo-resonators', Resonators);
+
+// A meter on the speaker output, for the mic's echo suppression: RMS and the dominant pitch
+// (normalised autocorrelation on a 4x-decimated window, like the mic's own features), posted
+// about 40 times a second. Some WebViews return silence from AnalyserNode, so it lives here.
+class Meter extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.buf = new Float32Array(1024);
+    this.n = 0;
+  }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      this.buf[this.n++] = ch[i];
+      if (this.n === this.buf.length) {
+        this.n = 0;
+        this.analyse();
+      }
+    }
+    return true;
+  }
+  analyse() {
+    const x = this.buf;
+    let sum = 0;
+    for (let i = 0; i < x.length; i++) sum += x[i] * x[i];
+    const rms = Math.sqrt(sum / x.length);
+    const n = x.length >> 2, d = new Float32Array(n);
+    for (let i = 0; i < n; i++) d[i] = (x[i * 4] + x[i * 4 + 1] + x[i * 4 + 2] + x[i * 4 + 3]) * 0.25;
+    const sr = sampleRate / 4;
+    const minLag = Math.max(2, Math.floor(sr / 1000)), maxLag = Math.min(n >> 1, Math.floor(sr / 70));
+    const m = n - maxLag;
+    let e0 = 0;
+    for (let i = 0; i < m; i++) e0 += d[i] * d[i];
+    let best = 0, lagAt = 0;
+    const r = new Float32Array(maxLag + 1);
+    if (e0 > 1e-9)
+      for (let lag = minLag; lag <= maxLag; lag++) {
+        let c = 0, e1 = 0;
+        for (let i = 0; i < m; i++) { c += d[i] * d[i + lag]; e1 += d[i + lag] * d[i + lag]; }
+        r[lag] = c / Math.sqrt(e0 * e1 + 1e-12);
+        if (r[lag] > best) best = r[lag];
+      }
+    for (let lag = minLag + 1; lag < maxLag; lag++)
+      if (r[lag] >= best * 0.92 && r[lag] >= r[lag - 1] && r[lag] >= r[lag + 1]) { lagAt = lag; break; }
+    this.port.postMessage({ rms, hz: lagAt ? sr / lagAt : 0, clarity: best });
+  }
+}
+registerProcessor('bobo-meter', Meter);
 `;
 
 export class ResonatorPool {
   private node: AudioWorkletNode | null = null;
   private queue: object[] = [];
   private failed = false;
+  /** The latest speaker measurement from the meter worklet. */
+  level = { rms: 0, hz: 0, clarity: 0 };
 
-  constructor(private ctx: AudioContext, out: AudioNode) {
+  constructor(private ctx: AudioContext, out: AudioNode, private tap?: AudioNode) {
     if (!ctx.audioWorklet) {
       this.failed = true;
       return;
@@ -114,6 +165,13 @@ export class ResonatorPool {
         this.node = new AudioWorkletNode(ctx, 'bobo-resonators', { numberOfInputs: 0, outputChannelCount: [2] });
         this.node.connect(out);
         this.flush();
+        // The speaker meter taps the final output and feeds a silent path so it keeps running.
+        const meter = new AudioWorkletNode(ctx, 'bobo-meter', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+        meter.port.onmessage = (e) => (this.level = e.data);
+        const hush = ctx.createGain();
+        hush.gain.value = 0;
+        (this.tap ?? out).connect(meter);
+        meter.connect(hush).connect(ctx.destination);
         console.log('[bobo] resonators: audio worklet ready');
       })
       .catch((e) => {
