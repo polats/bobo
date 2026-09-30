@@ -1,7 +1,7 @@
 // Records each toy with autoplay input via CDP screencast into frames/<toy>/ as JPEGs + timestamps.
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints'];
+const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints', 'chladni', 'glass', 'frost', 'bubble', 'plasma', 'snap', 'hourglass', 'honey'];
 const WARM = 1500, DUR = 8400;
 // Capture size: 360×480 (3:4) matches the hub's preview cards; scripted moves were authored at 300×375.
 const VW = Number(process.env.VW ?? 360), VH = Number(process.env.VH ?? 480);
@@ -137,6 +137,84 @@ const scripts = {
       for (let i = 0; i <= 12; i++) { await p.mouse.move(r.x + (k % 2 ? 1 : -1) * r.w * (1 - (2 * i) / 12), yy); await wait(28); }
     }
     await p.mouse.up();
+  },
+  // Sound, mic and new-physics toys: driven through their dev hooks where a mic or two hands are needed.
+  async chladni(q) {
+    const p = q.raw;
+    await wait(300);
+    for (let i = 0; i < 3; i++) { await p.evaluate(() => window.__chladniDev.tap(0.35, 0.2, 1)); await wait(250); }
+    await p.evaluate(() => window.__chladniDev.sing(154, 0.8, 3.2));
+    await wait(3300);
+    await p.evaluate(() => window.__chladniDev.sing(220, 0.8, 4));
+  },
+  async glass(q) {
+    const p = q.raw;
+    await wait(300);
+    await p.evaluate(() => window.__glassDev.wet(1));
+    const g = await p.evaluate(() => window.__glass().rim);
+    const k = VW / g.W;
+    const cx = g.cx * k, cy = g.rimY * k, r = g.R * k * 0.98, ky = g.K;
+    await p.mouse.move(cx + r, cy); await p.mouse.down();
+    for (let i = 0; i <= 420; i++) { const a = (i / 60) * Math.PI * 2 * 0.9; await p.mouse.move(cx + r * Math.cos(a), cy + r * ky * Math.sin(a)); await wait(16); }
+    await p.mouse.up();
+  },
+  async frost(q) {
+    const p = q.raw;
+    await p.evaluate(() => window.__frostBreath(true));
+    await wait(1800);
+    await p.evaluate(() => window.__frostBreath(false));
+    const stroke = async (pts) => { await p.mouse.move(...pts[0]); await p.mouse.down(); for (const pt of pts.slice(1)) { await p.mouse.move(...pt); await wait(18); } await p.mouse.up(); };
+    await stroke(Array.from({ length: 30 }, (_, i) => [70 + i * 7, 300 - Math.sin(i / 4) * 30]));
+    await stroke(Array.from({ length: 24 }, (_, i) => [180 + Math.sin(i / 3) * 20, 180 + i * 7]));
+    await p.evaluate(() => window.__frostBreath(true));
+    await wait(1500);
+    await p.evaluate(() => window.__frostBreath(false));
+  },
+  async bubble(q) {
+    const p = q.raw;
+    await wait(700);
+    for (const [v, hold] of [[0.35, 2800], [0.7, 1800]]) {
+      await p.evaluate((b) => window.__bubble.setBlow(b), v);
+      await wait(hold);
+      await p.evaluate(() => window.__bubble.setBlow(null));
+      await wait(500);
+    }
+  },
+  async plasma(q) {
+    const p = q.raw;
+    await wait(600);
+    await p.mouse.move(250, 170); await p.mouse.down();
+    await wait(1500);
+    for (let i = 0; i <= 60; i++) { await p.mouse.move(250 - i * 2.2, 170 + Math.sin(i / 8) * 60); await wait(30); }
+    await p.mouse.up();
+  },
+  async snap(q) {
+    // Two fingers on the strand's ends, bending it until it cascades apart.
+    const p = q.raw;
+    const cdp = await p.context().newCDPSession(p);
+    await wait(500);
+    for (let round = 0; round < 2; round++) {
+      const ends = await p.evaluate(() => window.__snap.ends());
+      const e = ends[0];
+      if (!e) break;
+      const a = { x: e.a[0], y: e.a[1] }, b = { x: e.b[0], y: e.b[1] };
+      const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id })) });
+      await touch('touchStart', [[a.x, a.y], [b.x, b.y]]);
+      for (let i = 1; i <= 40; i++) {
+        const t = i / 40;
+        await touch('touchMove', [[a.x + (b.x - a.x) * 0.18 * t, a.y - 60 * t], [b.x - (b.x - a.x) * 0.18 * t, b.y - 60 * t]]);
+        await wait(35);
+      }
+      await touch('touchEnd', []);
+      await wait(1400);
+      await p.evaluate(() => window.__snap.reset());
+      await wait(300);
+    }
+  },
+  async hourglass(q) {
+    const p = q.raw;
+    await wait(300);
+    await p.evaluate(() => window.__hourglassDev.flip());
   },
   async dig(p) {
     // Dig a pit under the lawn, tunnel sideways to undercut it, then drill down.
