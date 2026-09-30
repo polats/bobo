@@ -1,8 +1,8 @@
 # bobo
 
-![bobo — what's new: Knockdown, Peel It, Pour Sort, Foundry, Invisible Ink, Kintsugi, Mow Lines and Fingerprint Dust](docs/media/bobo-latest.gif)
+![bobo — what's new: Chladni Plate, Singing Glass, Snap!, Frost Window, Bubble Wand, Plasma Globe, Hourglass and Honey Drizzle](docs/media/bobo-latest.gif)
 
-A physics sandbox of 33 small toys built on novel, satisfying, performant simulations (liquid, particles, cloth, yarn, soft bodies, sand, dirt, molten metal, paper and film, soap films, frost, plasma, vibrating plates and glasses), tuned for juicy visuals and sound. It runs in the browser and as an iOS and Android app.
+A physics sandbox of 34 small toys built on novel, satisfying, performant simulations (liquid, particles, cloth, yarn, soft bodies, sand, dirt, molten metal, paper and film, soap films, frost, plasma, vibrating plates and glasses), tuned for juicy visuals and sound. It runs in the browser and as an iOS and Android app.
 
 ## Toys
 
@@ -19,6 +19,7 @@ Grouped by the hub's shelves.
 | **Ferro Blob** | Drag a magnet under a dish of black ferrofluid: it crawls after you and bristles with spikes; two fingers split it, taps drop droplets. | Double-density particle liquid + Rosensweig spike lattice + chrome shading on WebGL2 (`src/toys/ferro`) |
 | **Pour Sort** | Liquid sort with real pouring: tap a tube, tap another, and a cohesive stream pours across. Liquids have densities, so oil floats up through syrup after a pour. Every level is solver-checked; undo any time. | Layer-stack logic + Clavet double-density particle stream on WebGL2 (`src/toys/pour`) |
 | **Bubble Wand** | Dip the wand and a soap film forms; it drains into rainbow bands, swirls under your finger, grows black spots and pops. Blow (into the mic, or hold the button): softly for one big bubble, hard for a stream of small ones. | 2D film thickness field with drainage, Plateau-border suction and Culick rupture (after Ishida et al. 2020), exact thin-film interference colour, WebGL2 (`src/toys/bubble`) |
+| **Honey Drizzle** | Hold a honey dipper over toast: the thread coils, faster the higher you lift it; drag it and it lays loops, figure-eights and meanders. Golden syrup, chocolate and condensed milk too. | Discrete viscous thread (Bergou et al. 2010) with volume-conserving segments over a Huppert thin-film pool, WebGL2 (`src/toys/honey`) |
 | **Goo Lab** | Pour water, jelly, snow and sand that all interact; poke and squish them. Snow and sand glitter as grains tumble. | 2D MLS-MPM on WebGPU compute, per-grain glints (`src/toys/goo`) |
 | **Jelly Stack** | Tap to drop gummy cubes, stars, hearts and a smiling Bobo; stack them, grab and fling, slap the tower over. | Shape-matching soft bodies + PBD contacts on WebGL2 (`src/toys/jelly`) |
 | **Jelly Merge** | Suika with gummies: drop jelly fruit into a jar; matching sizes smoosh together and pop into a bigger one (hit-stop, shockwave, combo pitch), all the way to a giant Bobo. | Jelly Stack's shape matching + merge rules on WebGL2 (`src/toys/merge`) |
@@ -95,7 +96,9 @@ Play it: https://bobo-ashy-ten.vercel.app. Deploys are manual for now: `npx verc
 | ![Marbling Tray](docs/media/marble.gif)<br>**Marbling Tray** | ![Jelly Merge](docs/media/merge.gif)<br>**Jelly Merge** | ![Power Rinse](docs/media/rinse.gif)<br>**Power Rinse** | ![Sand Jar](docs/media/sandjar.gif)<br>**Sand Jar** |
 | ![Spool Sort](docs/media/spool.gif)<br>**Spool Sort** | ![Dig Down](docs/media/dig.gif)<br>**Dig Down** | ![Knockdown](docs/media/knockdown.gif)<br>**Knockdown** | ![Peel It](docs/media/peel.gif)<br>**Peel It** |
 | ![Pour Sort](docs/media/pour.gif)<br>**Pour Sort** | ![Mow Lines](docs/media/mow.gif)<br>**Mow Lines** | ![Foundry](docs/media/foundry.gif)<br>**Foundry** | ![Invisible Ink](docs/media/ink-letter.gif)<br>**Invisible Ink** |
-| ![Kintsugi](docs/media/kintsugi.gif)<br>**Kintsugi** | ![Fingerprint Dust](docs/media/prints.gif)<br>**Fingerprint Dust** |  |  |
+| ![Kintsugi](docs/media/kintsugi.gif)<br>**Kintsugi** | ![Fingerprint Dust](docs/media/prints.gif)<br>**Fingerprint Dust** | ![Chladni Plate](docs/media/chladni.gif)<br>**Chladni Plate** | ![Singing Glass](docs/media/glass.gif)<br>**Singing Glass** |
+| ![Frost Window](docs/media/frost.gif)<br>**Frost Window** | ![Bubble Wand](docs/media/bubble.gif)<br>**Bubble Wand** | ![Plasma Globe](docs/media/plasma.gif)<br>**Plasma Globe** | ![Snap!](docs/media/snap.gif)<br>**Snap!** |
+| ![Hourglass](docs/media/hourglass.gif)<br>**Hourglass** | ![Honey Drizzle](docs/media/honey.gif)<br>**Honey Drizzle** |  |  |
 
 Captured in headless Chrome with [`tools/media`](tools/media).
 

@@ -211,6 +211,17 @@ const scripts = {
       await wait(300);
     }
   },
+  async honey(q) {
+    // Hold the dipper high so it coils, then drag it to lay loops and a meander.
+    const p = q.raw;
+    await p.evaluate(() => window.__honeyDev.place(-3, 6));
+    await wait(2800);
+    await p.evaluate(() => window.__honeyDev.drive(6));
+    await wait(1600);
+    await p.evaluate(() => window.__honeyDev.drive(-10));
+    await wait(1400);
+    await p.evaluate(() => window.__honeyDev.stop());
+  },
   async hourglass(q) {
     const p = q.raw;
     await wait(300);

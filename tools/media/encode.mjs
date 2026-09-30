@@ -1,4 +1,4 @@
-// Encodes frames/<toy>/ into per-toy GIFs (240×320) and a 1344×1024 collage GIF (8 s loop).
+// Encodes frames/<toy>/ into per-toy GIFs (240×320) and a 1008×1344 collage GIF (8 s loop).
 import jpeg from 'jpeg-js';
 import { PNG } from 'pngjs';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -8,12 +8,12 @@ const FPS = Number(process.env.FPS ?? 12.5);
 const SECONDS = 8;
 const N = Math.round(FPS * SECONDS);
 const DELAY = Math.round(1000 / FPS);
-const toys = ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints'];
-// 7×4 grid, row-major; the title tile takes the first two cells (see overlay.html).
-const cells = Object.fromEntries(toys.map((t, i) => [t, [(i + 2) % 7, Math.floor((i + 2) / 7)]]));
+const toys = ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints', 'chladni', 'glass', 'frost', 'bubble', 'plasma', 'snap', 'hourglass', 'honey'];
+// 6×6 grid, row-major; the title tile takes the first two cells (see overlay.html).
+const cells = Object.fromEntries(toys.map((t, i) => [t, [(i + 2) % 6, Math.floor((i + 2) / 6)]]));
 mkdirSync('out', { recursive: true });
 
-const W = 1344, H = 1024, TW = 192, TH = 256, GW = 240, GH = 320;
+const W = 1008, H = 1344, TW = 168, TH = 224, GW = 240, GH = 320;
 const overlay = PNG.sync.read(readFileSync('overlay.png'));
 const collage = Array.from({ length: N }, () => new Uint8Array(W * H * 4));
 for (const toy of toys) {
