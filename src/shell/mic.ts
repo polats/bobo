@@ -118,9 +118,9 @@ class MicInput implements Mic {
       return;
     }
     // Sound only a little above the floor is the room settling (inputs often fade in): catch up
-    // fast. Well above it is a blow or a note: creep, so a long blow isn't absorbed into the floor.
+    // fast. Well above it is a blow or a held note: barely move, so neither fades into the floor.
     const above = db - this.floorDb;
-    this.floorDb = Math.max(-90, above < 0 ? db : this.floorDb + (above < 14 ? 0.35 : 0.05));
+    this.floorDb = Math.max(-90, above < 0 ? db : this.floorDb + (above < 14 ? 0.35 : 0.004));
     const level = Math.max(0, Math.min(1, (db - this.floorDb - 6) / 30));
     this.level += (level - this.level) * 0.5;
     // Breath is noise: loud with little periodicity. A held note is loud but clearly periodic.

@@ -57,6 +57,14 @@ ICONS['ink-letter'] = svg('<path d="M4.5 3.5h11l4 4v13h-15Z"/><path d="M15.5 3.5
 ICONS.kintsugi = svg('<path d="M3.5 10.5h17c-.4 4.8-3.9 8-8.5 8s-8.1-3.2-8.5-8Z"/><path d="M9 20.5h6"/><path d="m10.5 10.5 1.5 2.5-1 2 1.5 3.3"/>');
 // Fingerprint Dust: a fingerprint whorl.
 ICONS.prints = svg('<path d="M8.2 19.5c-1.4-2-2.2-4.4-2.2-7a6 6 0 0 1 11.1-3.2"/><path d="M18 12.5c0 2.8-.6 5-1.6 7"/><path d="M9.2 12.5a2.8 2.8 0 0 1 5.6 0c0 2.6-.7 5-2 7"/><path d="M12 12.5c0 2.3-.5 4.4-1.5 6.2"/>');
+// Chladni Plate: a plate with sand on its nodal lines.
+ICONS.chladni = svg('<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M3.5 12h17M12 3.5v17"/><path d="M6.5 6.5c2 2 2 9 0 11M17.5 6.5c-2 2-2 9 0 11"/>');
+// Singing Glass: a wine glass with sound waves.
+ICONS.glass = svg('<path d="M8 3.5h8l-.5 5a3.5 3.5 0 0 1-7 0Z"/><path d="M12 12v6.5M9 20.5h6"/><path d="M8.6 7.5h6.8"/><path d="M19 5.5c.9 1 .9 3 0 4M4.9 5.5c-.9 1-.9 3 0 4"/>');
+// Frost Window: a six-armed ice crystal.
+ICONS.frost = svg('<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/><path d="m10 4.8 2 1.6 2-1.6M10 19.2l2-1.6 2 1.6M5 10.3l2.4-.3.6-2.4M19 13.7l-2.4.3-.6 2.4M5 13.7l2.4.3.6 2.4M19 10.3l-2.4-.3-.6-2.4"/>');
+// Bubble Wand: a looped wand with a bubble floating off.
+ICONS.bubble = svg('<circle cx="9" cy="9" r="5"/><path d="m12.6 12.6 7.9 7.9"/><circle cx="17.5" cy="5.5" r="2.5"/><path d="M7 7.5a2 2 0 0 1 2-1.5"/>');
 
 const FALLBACK = svg('<circle cx="12" cy="12" r="7"/><path d="M12 8v4l2.5 2.5"/>');
 

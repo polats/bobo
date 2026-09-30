@@ -27,6 +27,9 @@ const CATALOG: Record<string, Entry> = {
   merge: { added: '2026-09-29T10:18:47-04:00', category: 'Soft & squishy' },
   rinse: { added: '2026-09-29T10:23:12-04:00', category: 'Make & reveal' },
   sandjar: { added: '2026-09-29T10:21:38-04:00', category: 'Make & reveal' },
+  chladni: { added: '2026-09-29T20:02:47-04:00', category: 'Make & reveal' },
+  glass: { added: '2026-09-29T20:02:47-04:00', category: 'Make & reveal' },
+  frost: { added: '2026-09-29T20:02:47-04:00', category: 'Make & reveal' },
   foundry: { added: '2026-09-29T17:44:12-04:00', category: 'Make & reveal' },
   'ink-letter': { added: '2026-09-29T17:44:12-04:00', category: 'Make & reveal' },
   kintsugi: { added: '2026-09-29T17:44:12-04:00', category: 'Make & reveal' },
@@ -83,7 +86,7 @@ const FELT = ['rinse', 'mow', 'peel', 'pour', 'spool', 'dig', 'foundry', 'cloth'
 /** A toy's updates, newest first (the shared sound and haptics passes included). */
 export function updates(id: string): Update[] {
   const own = [...(RINGING.includes(id) ? [RINGS] : []), ...(FELT.includes(id) ? [FEEL] : []), ...(UPDATES[id] ?? [])];
-  return own.includes(SOUND) || ['merge', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints'].includes(id) ? own : [...own, SOUND];
+  return own.includes(SOUND) || ['merge', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints', 'chladni', 'glass', 'frost', 'bubble'].includes(id) ? own : [...own, SOUND];
 }
 
 /** Latest notable update, if any. */
