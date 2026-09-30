@@ -126,8 +126,10 @@ class MicInput implements Mic {
       const r = Math.min(1, f.rms / out.rms);
       this.leak = r < this.leak ? this.leak + (r - this.leak) * 0.25 : Math.min(1, this.leak * 1.003);
     }
-    const echo = this.leak * out.rms;
-    const voiced = Math.sqrt(Math.max(0, f.rms * f.rms - 1.6 * echo * echo));
+    // The learned leak sits near the quietest ratio seen, and the echo usually runs a few times
+    // above that, so subtract a generous margin.
+    const echo = 3 * this.leak * out.rms;
+    const voiced = Math.sqrt(Math.max(0, f.rms * f.rms - echo * echo));
     // A pitch that matches what the speaker is playing (same note or an octave off) is the toy
     // hearing itself, unless the player is clearly louder than the echo.
     if (f.pitch > 0 && out.peakHz > 0 && out.peakShare > 0.5 && out.rms > 2e-3) {
@@ -135,6 +137,9 @@ class MicInput implements Mic {
       const same = Math.abs(off - Math.round(off)) < 0.06 && Math.abs(Math.round(off)) <= 1;
       if (same && voiced < 0.85 * f.rms) f = { ...f, pitch: 0, clarity: Math.min(f.clarity, 0.5) };
     }
+    // Mostly echo: whatever note it hears is the toy's own (a tap rings several modes, so the mic
+    // can lock onto a different one than the speaker's loudest).
+    if (voiced < 0.6 * f.rms) f = { ...f, pitch: 0, clarity: Math.min(f.clarity, 0.5) };
     if (++this.frames === 40) console.log(`[bobo] mic: ${Math.round(20 * Math.log10(f.rms + 1e-12))} dB, clarity ${f.clarity.toFixed(2)}, echo leak ${this.leak.toFixed(3)}`);
     // Near-digital silence (the first buffers, a muted input; no real mic sits below about -85 dB)
     // says nothing about the room: skip it. The room's floor follows the raw input.
