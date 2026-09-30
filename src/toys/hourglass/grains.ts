@@ -7,6 +7,11 @@
 // slope, the crater and the neck discharge all come out of these contacts.
 import { CELL, Glass } from './glass';
 
+/** Sleep after this long (s) at rest; a partner faster than WAKE_V (m/s), or than twice the speed
+ *  gravity adds in one substep (a resting grain's solver residual), wakes a sleeper. */
+const SLEEP_T = 0.3;
+const WAKE_V = 0.04;
+
 export interface Forces {
   /** Gravity plus the glass's own acceleration, in the glass frame (m/s²). */
   gx: number;
@@ -80,6 +85,11 @@ export class Grains {
     this.items = new Int32Array(max);
     this.nearWall = new Uint8Array(max);
     this.zone = new Uint8Array(max);
+    this.asleep = new Uint8Array(max);
+    this.calm = new Float32Array(max);
+    this.ax0 = new Float64Array(max);
+    this.ay0 = new Float64Array(max);
+    this.wa = new Float64Array(max);
     this.ovx = new Float64Array(max);
     this.ovy = new Float64Array(max);
     this.cI = new Int32Array(max * 5);
@@ -120,6 +130,7 @@ export class Grains {
       }
     }
     this.n = n;
+    this.wakeAll();
     this.cs = this.rMax * 2;
     this.gx0 = glass.x0;
     this.gy0 = glass.y0;
@@ -130,7 +141,57 @@ export class Grains {
 
   step(glass: Glass, dt: number, substeps: number, f: Forces) {
     const h = dt / substeps;
+    const gl = Math.hypot(f.gx, f.gy) || 1;
+    const wv = Math.max(WAKE_V, 2 * gl * h);
+    this.wakeV2 = wv * wv;
+    this.gdx = f.gx / gl;
+    this.gdy = f.gy / gl;
     for (let s = 0; s < substeps; s++) this.substep(glass, h, f);
+    if (this.sleeping) this.checkSupport(glass);
+  }
+
+  wakeAll() {
+    for (let i = 0; i < this.n; i++) {
+      this.asleep[i] = 0;
+      this.calm[i] = 0;
+      this.wa[i] = this.w[i];
+    }
+    this.sleeping = 0;
+  }
+
+  private wake(i: number) {
+    this.asleep[i] = 0;
+    this.calm[i] = 0;
+    this.wa[i] = this.w[i];
+    this.sleeping--;
+  }
+
+  /** Wake sleepers that have lost what held them up: fewer than two neighbours or glass below them. */
+  private checkSupport(glass: Glass) {
+    const { n, x, y, r, asleep, items, start, cellOf, gw, gh, tmp, gdx, gdy } = this;
+    const tol = 0.15 * this.rMax;
+    for (let i = 0; i < n; i++) {
+      if (!asleep[i]) continue;
+      let sup = 0;
+      if (glass.sample(x[i], y[i], tmp) + r[i] > -tol && tmp[1] * gdx + tmp[2] * gdy > 0.2) sup++;
+      const ci = cellOf[i], cx = ci % gw, cy = (ci / gw) | 0;
+      for (let oy = -1; oy <= 1 && sup < 2; oy++) {
+        if (cy + oy < 0 || cy + oy >= gh) continue;
+        for (let ox = -1; ox <= 1 && sup < 2; ox++) {
+          if (cx + ox < 0 || cx + ox >= gw) continue;
+          const c = ci + oy * gw + ox;
+          for (let m = start[c], e = start[c + 1]; m < e; m++) {
+            const j = items[m];
+            if (j === i) continue;
+            const dx = x[j] - x[i], dy = y[j] - y[i], rr = r[i] + r[j] + tol;
+            const d2 = dx * dx + dy * dy;
+            // A neighbour counts as support if it touches and sits on the downhill side.
+            if (d2 < rr * rr && dx * gdx + dy * gdy > 0.2 * Math.sqrt(d2)) sup++;
+          }
+        }
+      }
+      if (sup < 2) this.wake(i);
+    }
   }
 
   private substep(glass: Glass, h: number, f: Forces) {
@@ -140,7 +201,14 @@ export class Grains {
     const dir = f.gy < 0 ? 1 : -1, ux0 = -f.gx / gl, uy0 = -f.gy / gl;
     // Speed cap: at most ~0.9 grain radius per substep, so nothing tunnels through a pile.
     const vmax = (0.9 * this.rMax) / h;
+    const asleep = this.asleep;
     for (let i = 0; i < n; i++) {
+      if (asleep[i]) {
+        px[i] = x[i];
+        py[i] = y[i];
+        this.pth[i] = this.th[i];
+        continue;
+      }
       // Gravity, plus centrifugal, Euler and Coriolis terms while the glass is turning.
       const ax = f.gx + w2 * x[i] + f.alpha * y[i] + 2 * f.w * vy[i];
       const ay = f.gy + w2 * y[i] - f.alpha * x[i] - 2 * f.w * vx[i];
@@ -179,6 +247,10 @@ export class Grains {
     if (this.neckIters) this.solveNeck(glass, this.neckIters);
     const { th, pth, om, ovx, ovy } = this;
     for (let i = 0; i < n; i++) {
+      if (asleep[i]) {
+        ovx[i] = ovy[i] = 0;
+        continue;
+      }
       om[i] = (th[i] - pth[i]) / h;
       ovx[i] = vx[i];
       ovy[i] = vy[i];
@@ -186,7 +258,36 @@ export class Grains {
       vy[i] = (y[i] - py[i]) / h;
     }
     this.contactVelocities();
+    if (this.sleepEnabled) this.settle(glass, h);
   }
+
+  /**
+   * Put grains to sleep that have stayed within a small drift of one spot on two or more contacts for
+   * SLEEP_T; never in the neck zone. Judged on displacement, not speed: at a few substeps a resting
+   * grain's velocity carries the solver's gravity residual (~g·h/2), though it goes nowhere.
+   */
+  private settle(glass: Glass, h: number) {
+    const { n, x, y, asleep, calm, contacts, ax0, ay0 } = this;
+    const tol2 = (0.1 * this.rMax) ** 2, band = glass.neck * 0.5 + 0.004;
+    for (let i = 0; i < n; i++) {
+      if (asleep[i]) continue;
+      const dx = x[i] - ax0[i], dy = y[i] - ay0[i];
+      if (contacts[i] >= 2 && dx * dx + dy * dy < tol2 && Math.abs(y[i]) > band) {
+        calm[i] += h;
+        if (calm[i] > SLEEP_T) {
+          asleep[i] = 1;
+          this.wa[i] = 0;
+          this.vx[i] = this.vy[i] = this.om[i] = 0;
+          this.sleeping++;
+        }
+      } else {
+        calm[i] = 0;
+        ax0[i] = x[i];
+        ay0[i] = y[i];
+      }
+    }
+  }
+
 
   /**
    * Velocity pass over this substep's contacts. Pushing an overlap apart also gives the pair the push
@@ -195,11 +296,13 @@ export class Grains {
    * restitution on real impacts (steel shot bounces, sand doesn't).
    */
   private contactVelocities() {
-    const { vx, vy, ovx, ovy, w, cI, cJ, cNx, cNy, nC } = this;
+    const { vx, vy, ovx, ovy, cI, cJ, cNx, cNy, nC } = this;
+    const w = this.wa;
     const e = this.cfg.bounce;
     for (let c = 0; c < nC; c++) {
       const i = cI[c], j = cJ[c], nx = cNx[c], ny = cNy[c];
       if (j < 0) {
+        if (!w[i]) continue;
         // Glass: n points into the wall; separation is motion against it.
         const was = -(ovx[i] * nx + ovy[i] * ny), now = -(vx[i] * nx + vy[i] * ny);
         const cap = Math.max(was, 0) + (was < -0.05 ? -e * was : 0);
@@ -212,7 +315,7 @@ export class Grains {
       const was = (ovx[j] - ovx[i]) * nx + (ovy[j] - ovy[i]) * ny;
       const now = (vx[j] - vx[i]) * nx + (vy[j] - vy[i]) * ny;
       const cap = Math.max(was, 0) + (was < -0.05 ? -e * was : 0);
-      if (now > cap) {
+      if (now > cap && w[i] + w[j] > 0) {
         const ex = (now - cap) / (w[i] + w[j]);
         vx[i] += ex * w[i] * nx;
         vy[i] += ex * w[i] * ny;
@@ -272,6 +375,22 @@ export class Grains {
   private cNy: Float64Array;
   private nC = 0;
   private recording = false;
+  /**
+   * Sleeping: a supported grain that has barely moved for a while stops being solved and becomes a
+   * fixed obstacle (inverse mass 0) until something fast hits it, what holds it up moves away, or the
+   * glass moves. A resting pile then costs almost nothing.
+   */
+  readonly asleep: Uint8Array;
+  private calm: Float32Array;
+  private ax0: Float64Array;
+  private ay0: Float64Array;
+  /** Inverse mass as the solver sees it: w when awake, 0 when asleep. */
+  private wa: Float64Array;
+  sleeping = 0;
+  sleepEnabled = true;
+  private wakeV2 = WAKE_V * WAKE_V;
+  private gdx = 0;
+  private gdy = -1;
   private zoneList: Int32Array;
   private ux = 0;
   private uy = 1;
@@ -279,7 +398,7 @@ export class Grains {
   neckIters = 4;
 
   private solvePairs(dir: number) {
-    const { n, items, start, cellOf, gw, gh, x, y, r } = this;
+    const { n, items, start, cellOf, gw, gh, x, y, r, asleep } = this;
     // Sorted order is row-major from the bottom; walk it from whichever end gravity points at, and
     // take each pair once with a half stencil: the rest of this cell, the next cell in the row, and
     // the three cells of the next row (all mirrored when walking down).
@@ -309,6 +428,7 @@ export class Grains {
         for (let m = m0; m < m1; m++) {
           // Cheap reject before the full contact.
           const j = items[m];
+          if (asleep[i] & asleep[j]) continue;
           const dx = x[j] - x[i], dy = y[j] - y[i], rr = r[i] + r[j];
           if (dx * dx + dy * dy < rr * rr) this.contact(i, j);
         }
@@ -328,6 +448,7 @@ export class Grains {
     for (let i = 0; i < n; i++) {
       const inZone = Math.abs(y[i]) < band ? 1 : 0;
       zone[i] = inZone;
+      if (inZone && this.asleep[i]) this.wake(i);
       if (inZone) zoneList[z++] = i;
     }
     if (!z) return;
@@ -343,7 +464,7 @@ export class Grains {
             const c = ci + oy * gw + ox;
             for (let m = start[c], e = start[c + 1]; m < e; m++) {
               const j = items[m];
-              if (j === i || (zone[j] && j < i)) continue;
+              if (j === i || (zone[j] && j < i) || (this.asleep[i] & this.asleep[j])) continue;
               this.contact(i, j);
             }
           }
@@ -359,7 +480,7 @@ export class Grains {
    * then caps how freely the two roll over each other.
    */
   private contact(i: number, j: number) {
-    const { x, y, px, py, r, w, th, pth } = this;
+    const { x, y, px, py, r, th, pth, asleep, vx, vy } = this;
     const dx = x[j] - x[i], dy = y[j] - y[i];
     const ri = r[i], rj = r[j], rr = ri + rj;
     const d2 = dx * dx + dy * dy;
@@ -367,10 +488,17 @@ export class Grains {
     const d = Math.sqrt(d2);
     const nx = dx / d, ny = dy / d;
     const pen = rr - d;
+    // A fast grain landing on a sleeping one wakes it.
+    if (asleep[i] !== asleep[j]) {
+      const k = asleep[i] ? j : i;
+      if (vx[k] * vx[k] + vy[k] * vy[k] > this.wakeV2) this.wake(asleep[i] ? i : j);
+    }
     if (this.recording) this.record(i, j, nx, ny);
+    const w = this.wa;
     // Up-component of the offset i→j (in contact distances) sets the mass ratio.
     const sc = this.expTab[(((dx * this.ux + dy * this.uy) / rr + 1) * 32 + 0.5) | 0];
     const wj = w[j] * sc, wi = w[i] / sc, ws = wi + wj;
+    if (ws <= 0) return;
     let cx = (nx * pen) / ws, cy = (ny * pen) / ws;
     x[i] -= cx * wi;
     y[i] -= cy * wi;
@@ -380,19 +508,20 @@ export class Grains {
     // Rolling resistance first: relative spin (as an arc at the effective radius) below roll × overlap
     // is cancelled and the pair turns as one; above it, it is reduced by that much.
     const re = (ri * rj) / rr;
-    const Ii = (ri * ri) / (2 * wi), Ij = (rj * rj) / (2 * wj);
+    // Inverse inertias of solid disks (0 for a sleeping one).
+    const ki = (2 * wi) / (ri * ri), kj = (2 * wj) / (rj * rj), kk = ki + kj;
     const roll = (th[i] - pth[i] - th[j] + pth[j]) * re, lim = cfg.roll * pen;
     const locked = roll <= lim && roll >= -lim;
-    const cut = (locked ? roll : roll > 0 ? lim : -lim) / re / (1 / Ii + 1 / Ij);
-    th[i] -= cut / Ii;
-    th[j] += cut / Ij;
+    const cut = (locked ? roll : roll > 0 ? lim : -lim) / re / kk;
+    th[i] -= cut * ki;
+    th[j] += cut * kj;
     // Coulomb friction on the tangential slip of the contact point (t is n turned +90°).
     const tx = -ny, ty = nx;
     const slip = (x[j] - px[j] - x[i] + px[i]) * tx + (y[j] - py[j] - y[i] + py[i]) * ty - rj * (th[j] - pth[j]) - ri * (th[i] - pth[i]);
     let fix = -slip;
     if (Math.abs(slip) > cfg.mu * pen) fix *= (cfg.muK * pen) / Math.abs(slip);
     // Shared between sliding and turning by mass and inertia: locked pairs turn together.
-    const rot = locked ? (rr * rr) / (Ii + Ij) : (ri * ri) / Ii + (rj * rj) / Ij;
+    const rot = locked ? (rr * rr * ki * kj) / kk : ri * ri * ki + rj * rj * kj;
     const lam = fix / (ws + rot);
     cx = lam * tx;
     cy = lam * ty;
@@ -401,12 +530,12 @@ export class Grains {
     x[j] += cx * wj;
     y[j] += cy * wj;
     if (locked) {
-      const dt = (lam * rr) / (Ii + Ij);
+      const dt = (lam * rr * ki * kj) / kk;
       th[i] -= dt;
       th[j] -= dt;
     } else {
-      th[i] -= (lam * ri) / Ii;
-      th[j] -= (lam * rj) / Ij;
+      th[i] -= lam * ri * ki;
+      th[j] -= lam * rj * kj;
     }
     this.contacts[i]++;
     this.contacts[j]++;
@@ -419,6 +548,7 @@ export class Grains {
     const margin = 3 * CELL + this.rMax;
     for (let q = 0; q < count; q++) {
       const i = list ? list[q] : q;
+      if (this.asleep[i]) continue;
       if (first) {
         // Cheap nearest-cell look first; most grains are nowhere near the glass.
         const ix = ((x[i] - x0) * inv + 0.5) | 0, iy = ((y[i] - y0) * inv + 0.5) | 0;

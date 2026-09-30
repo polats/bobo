@@ -10,7 +10,7 @@ export const hourglassToy: Toy = {
   id: 'hourglass',
   title: 'Hourglass',
   blurb: 'Turn your phone over and the sand runs. It pours at a steady rate however much is left above, heaps into a cone below and dimples into a crater on top. Switch to water and it gushes, then slows and glugs as the level drops. Narrow the neck and it clogs: shake it loose.',
-  tech: '2D frictional grains (position-based contacts, Coulomb friction, rolling resistance, 12 substeps, stack mass scaling, extra passes at the neck) · Clavet double-density water with rising air bubbles · measured discharge drives the hiss and haptics · device-motion gravity · WebGL2',
+  tech: '2D frictional grains (position-based contacts, Coulomb friction, rolling resistance, 8 substeps, stack mass scaling, extra passes at the neck, resting grains sleep) · Clavet double-density water with rising air bubbles · measured discharge drives the hiss and haptics · device-motion gravity · WebGL2',
   swatch: 'radial-gradient(ellipse 30% 22% at 50% 70%,#e2b877 0 60%,transparent 62%),linear-gradient(180deg,#3a2415 0 8%,#1b1411 9% 91%,#3a2415 92%)',
   refs: [
     {
@@ -35,7 +35,7 @@ export const hourglassToy: Toy = {
       short: 'Macklin et al. 2019',
       title: 'Small Steps in Physics Simulation (M. Macklin, K. Storey, M. Lu, P. Terdiman, N. Chentanez, S. Jeschke, M. Müller, SCA 2019)',
       url: 'https://doi.org/10.1145/3309486.3340247',
-      use: 'Many substeps with a single solver pass each instead of many iterations: 12 per frame here.',
+      use: 'Many substeps with a single solver pass each instead of many iterations: 8 per frame here (6 when the quality governor steps down).',
     },
     {
       short: 'Clavet et al. 2005',
@@ -80,9 +80,14 @@ const MAX_GRAINS = 5200;
 const MAX_WATER = 2600;
 const FILL = 0.65;
 const G = 9.81;
-/** Sim step: substeps per 1/60 s. */
-const SUB_GRAIN = 12;
-const SUB_WATER = 8;
+/** Substeps per frame at each quality level; the governor steps down when the sim runs long. */
+const SUB_GRAIN = [8, 6];
+const SUB_WATER = [6, 5];
+const NECK_ITERS = [4, 2];
+/** Governor: step down after this many frames over budget (sim ms), back up after a long calm spell. */
+const BUDGET_MS = 6;
+/** Water particle spacing (m). */
+const WATER_S = 0.0018;
 /** Window for the measured rate (s): shorter for water, which drains in a couple of seconds. */
 const RATE_WIN = { grain: 0.5, water: 0.25 };
 
@@ -97,7 +102,7 @@ class Hourglass implements ToyInstance {
   private water = new Water(MAX_WATER);
   private view: HourglassView;
   private medium: Medium = 'sand';
-  private tune = { neck: 4.5, grain: 1.0 };
+  private tune = { neck: 4.0, grain: 1.3 };
   private side = new Int8Array(Math.max(MAX_GRAINS, MAX_WATER));
   private src: 1 | -1 = 1;
   // Glass pose on screen.
@@ -147,6 +152,19 @@ class Hourglass implements ToyInstance {
   private used = false;
   private hintText = navigator.maxTouchPoints > 0 ? 'Turn your phone over · or tap Flip' : 'Drag to turn the glass · tap to knock it';
   private perf = { sim: 0, draw: 0 };
+  private forces: Forces = { gx: 0, gy: -G, w: 0, alpha: 0, face: 0 };
+  /** Quality level (0 full, 1 lite) and the governor's frame counters. */
+  private level = 0;
+  private slowFrames = 0;
+  private fastFrames = 0;
+  private uiFrame = 0;
+  private hintShown = '';
+  private hintOn = false;
+  private readoutText = '';
+  /** Low-passed felt gravity, and the gravity the sleeping grains settled under. */
+  private gLow = [0, -G];
+  private gRef = [0, -G];
+  private gOut: [number, number, number] = [0, -G, 0];
   private isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
   constructor(private ctx: ToyContext) {
@@ -213,6 +231,8 @@ class Hourglass implements ToyInstance {
           this.refill();
         },
         refill: () => this.refill(),
+        /** Force a quality level (0 full, 1 lite); the governor may change it again. */
+        quality: (l: number) => (this.level = Math.max(0, Math.min(SUB_GRAIN.length - 1, l))),
         runs: () => this.runs.map((r) => ({ medium: r.medium, pts: r.pts.map((v) => +v.toFixed(3)) })),
       };
     }
@@ -287,7 +307,7 @@ class Hourglass implements ToyInstance {
     const g = this.glassGravity();
     this.src = g[1] <= 0 ? 1 : -1;
     const sim = this.medium === 'water' ? this.water : this.grains;
-    if (this.medium === 'water') this.water.fill(this.glass, FILL, 0.0014, this.src);
+    if (this.medium === 'water') this.water.fill(this.glass, FILL, WATER_S, this.src);
     else {
       const def = MEDIA[this.medium];
       this.grains.cfg = { ...def.cfg };
@@ -323,6 +343,7 @@ class Hourglass implements ToyInstance {
     // A knuckle on the glass: a short sharp jolt to everything inside, and the glass rings.
     const a = Math.atan2(y, x) + Math.PI + (Math.random() - 0.5);
     this.jolt = { x: Math.cos(a) * 3 * G, y: Math.sin(a) * 3 * G, t: 0.05 };
+    this.grains.wakeAll();
     this.ctx.sound.impact('glass', 0.11, 0.55, { pan: Math.max(-1, Math.min(1, x / R)) * 0.5 });
     this.out.knocks++;
     this.ctx.haptic('light');
@@ -349,8 +370,11 @@ class Hourglass implements ToyInstance {
       gx += this.jolt.x;
       gy += this.jolt.y;
     }
-    const c = Math.cos(this.angle), s = Math.sin(this.angle);
-    return [c * gx + s * gy, -s * gx + c * gy, gz];
+    const c = Math.cos(this.angle), s = Math.sin(this.angle), o = this.gOut;
+    o[0] = c * gx + s * gy;
+    o[1] = -s * gx + c * gy;
+    o[2] = gz;
+    return o;
   }
 
   private input(dt: number) {
@@ -412,15 +436,23 @@ class Hourglass implements ToyInstance {
     const t0 = performance.now();
     const water = this.medium === 'water';
     const sim = water ? this.water : this.grains;
-    const steps = Math.max(1, Math.round(dt * 60));
-    const sub = water ? SUB_WATER : SUB_GRAIN;
+    const sub = (water ? SUB_WATER : SUB_GRAIN)[this.level];
+    this.grains.neckIters = NECK_ITERS[this.level];
     // Grains lying against the back pane feel Coulomb drag from the gravity pushing them into it.
-    const f: Forces = { gx, gy, w: this.omega, alpha: this.alpha, face: water ? 0 : 0.25 * Math.abs(gz) };
+    const f = this.forces;
+    f.gx = gx;
+    f.gy = gy;
+    f.w = this.omega;
+    f.alpha = this.alpha;
+    f.face = water ? 0 : 0.25 * Math.abs(gz);
     if (sim.plug && t > this.plugUntil) {
       sim.plug = false;
       this.newRun(false);
     }
-    for (let s = 0; s < steps; s++) sim.step(this.glass, dt / steps, sub, f);
+    if (!water) this.wakeOnDisturbance(gx, gy, dt);
+    // One step per frame: a slow frame runs the sand in slight slow motion rather than piling on
+    // more work (dt is capped by the host at 1/30 s; beyond 1/45 we take the smaller step).
+    sim.step(this.glass, Math.min(dt, 1 / 45), sub, f);
     const t1 = performance.now();
 
     // Which bulb is on top now? A flip starts a new run.
@@ -483,14 +515,55 @@ class Hourglass implements ToyInstance {
     this.view.draw(this.glass, this.vw, water ? 'water' : (this.medium as Look), n, water ? this.water.bubbles : []);
     const t3 = performance.now();
     this.perf.sim += (t1 - t0 - this.perf.sim) * 0.05;
+    this.govern();
     this.perf.draw += (t3 - t2 - this.perf.draw) * 0.05;
 
     if (t - this.pile.t > 0.5 && !water) this.measurePile();
     this.sound(dt);
-    this.drawGraph();
-    this.hint.textContent = this.jammed ? 'Clogged · shake it or tap the glass' : this.hintText;
-    this.hint.classList.toggle('show', this.jammed || (!this.used && t > 0.8 && t < 12));
-    ctx.setStatus(`${n} ${water ? 'water particles' : 'grains'}`);
+    // Overlay at 20 Hz, and only touch the DOM when something changed.
+    if (++this.uiFrame % 3 === 0) this.drawGraph();
+    const hint = this.jammed ? 'Clogged · shake it or tap the glass' : this.hintText;
+    const show = this.jammed || (!this.used && t > 0.8 && t < 12);
+    if (hint !== this.hintShown) this.hint.textContent = this.hintShown = hint;
+    if (show !== this.hintOn) this.hint.classList.toggle('show', (this.hintOn = show));
+    ctx.setStatus(`${n} ${water ? 'water particles' : 'grains'}${water ? '' : ` · ${this.grains.sleeping} asleep`}${this.level ? ' · lite' : ''}`);
+  }
+
+  /**
+   * Sleeping grains are fixed obstacles, so anything that would move a real resting pile wakes them
+   * all: the glass turning, a jolt or shake (felt gravity jumping off its low-passed value), or a tilt
+   * (the low-passed gravity turning more than ~1.5° from where they settled). Hand tremor does not.
+   */
+  private wakeOnDisturbance(gx: number, gy: number, dt: number) {
+    const k = 1 - Math.exp(-dt / 0.12), gl = this.gLow, gr = this.gRef;
+    gl[0] += (gx - gl[0]) * k;
+    gl[1] += (gy - gl[1]) * k;
+    const jolt = Math.hypot(gx - gl[0], gy - gl[1]) > 1.2;
+    const la = Math.hypot(gl[0], gl[1]) || 1, lr = Math.hypot(gr[0], gr[1]) || 1;
+    const turn = (gl[0] * gr[1] - gl[1] * gr[0]) / (la * lr);
+    const tilt = Math.abs(turn) > 0.026 || Math.abs(la - lr) > 0.05 * lr;
+    if (jolt || tilt || Math.abs(this.omega) > 0.05) {
+      if (this.grains.sleeping) this.grains.wakeAll();
+      gr[0] = gl[0];
+      gr[1] = gl[1];
+    }
+  }
+
+  private govern() {
+    const ms = this.perf.sim;
+    if (ms > BUDGET_MS && this.level < SUB_GRAIN.length - 1) {
+      if (++this.slowFrames > 40) {
+        this.level++;
+        this.slowFrames = 0;
+      }
+    } else this.slowFrames = 0;
+    // Only step back up after 10 s comfortably under a third of the budget at the lower level.
+    if (this.level > 0 && ms < BUDGET_MS / 3) {
+      if (++this.fastFrames > 600) {
+        this.level--;
+        this.fastFrames = 0;
+      }
+    } else this.fastFrames = 0;
   }
 
   /** Screen placement: fit the frame, rotated, between the HUD and the dock. */
@@ -664,7 +737,8 @@ class Hourglass implements ToyInstance {
     const pct = left.length ? Math.round(left[left.length - 2] * 100) : 100;
     let extra = '';
     if (!water && Number.isFinite(this.pile.angle)) extra = ` · pile ${Math.round(this.pile.angle)}°`;
-    this.readout.textContent = `${Math.round(this.rate)} ${unit} · ${pct}% above${extra}`;
+    const text = `${Math.round(this.rate)} ${unit} · ${pct}% above${extra}`;
+    if (text !== this.readoutText) this.readout.textContent = this.readoutText = text;
   }
 
   private devState() {
@@ -684,12 +758,12 @@ class Hourglass implements ToyInstance {
       jammed: this.jammed,
       src: this.src,
       angleDeg: +((this.angle * 180) / Math.PI).toFixed(1),
-      gravity: g.map((v) => +v.toFixed(2)),
+      gravity: Array.from(g, (v) => +v.toFixed(2)),
       pile: { reposeDeg: +this.pile.angle.toFixed(1), craterMm: +(this.pile.crater * 1000).toFixed(2), craterDeg: +this.pile.craterAngle.toFixed(1) },
       avalanche: this.avalanche,
       out: { ...this.out, hiss: +this.out.hiss.toFixed(3), bright: +this.out.bright.toFixed(2), haptic: +this.out.haptic.toFixed(3) },
       bubbles: water ? this.water.bubbles.length : 0,
-      perf: { simMs: +this.perf.sim.toFixed(2), drawMs: +this.perf.draw.toFixed(2) },
+      perf: { simMs: +this.perf.sim.toFixed(2), drawMs: +this.perf.draw.toFixed(2), level: this.level, asleep: this.grains.sleeping },
     };
   }
 
