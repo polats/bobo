@@ -160,7 +160,11 @@ class MicInput implements Mic {
     const level = Math.max(0, Math.min(1, (vdb - this.floorDb - 6) / 30));
     this.level += (level - this.level) * 0.5;
     // Breath is noise: loud with little periodicity. A held note is loud but clearly periodic.
-    const breath = level * Math.max(0, Math.min(1, (0.75 - f.clarity) / 0.4));
+    // Breath gets a wider echo margin still: a toy's own noisy sounds (crackle, hiss, strike
+    // clicks) look like breath, and a fire that hears its own crackle as blowing would roar on.
+    const bvoiced = Math.sqrt(Math.max(0, f.rms * f.rms - 4 * echo * echo));
+    const blevel = Math.max(0, Math.min(1, (20 * Math.log10(bvoiced + 1e-12) - this.floorDb - 6) / 30));
+    const breath = blevel * Math.max(0, Math.min(1, (0.75 - f.clarity) / 0.4));
     this.blow = breath > this.blow ? this.blow + (breath - this.blow) * 0.6 : this.blow * 0.82;
     this.pitch = f.clarity > 0.85 && level > 0.15 ? f.pitch : 0;
     if (this.frames % 80 === 0) console.log(`[bobo] mic: level ${this.level.toFixed(2)} blow ${this.blow.toFixed(2)} pitch ${Math.round(this.pitch)} · speaker ${Math.round(out.peakHz)} Hz · leak ${this.leak.toFixed(3)}`);
