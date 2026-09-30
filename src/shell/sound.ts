@@ -636,4 +636,4 @@ const VOICES: Record<Voice, Synth> = {
 // Exposed for on-device debugging over the WebView inspector.
 (window as unknown as Record<string, unknown>).boboOutputNow = outputNow;
 (window as unknown as Record<string, unknown>).boboSound = sound;
-(window as unknown as Record<string, unknown>).boboAudio = () => ({ state: ctx?.state, rate: ctx?.sampleRate, pool: pool?.ready });
+(window as unknown as Record<string, unknown>).boboAudio = () => ({ state: ctx?.state, rate: ctx?.sampleRate, pool: pool?.ready, time: ctx?.currentTime });
