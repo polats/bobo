@@ -65,6 +65,14 @@ ICONS.glass = svg('<path d="M8 3.5h8l-.5 5a3.5 3.5 0 0 1-7 0Z"/><path d="M12 12v
 ICONS.frost = svg('<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/><path d="m10 4.8 2 1.6 2-1.6M10 19.2l2-1.6 2 1.6M5 10.3l2.4-.3.6-2.4M19 13.7l-2.4.3-.6 2.4M5 13.7l2.4.3.6 2.4M19 10.3l-2.4-.3-.6-2.4"/>');
 // Bubble Wand: a looped wand with a bubble floating off.
 ICONS.bubble = svg('<circle cx="9" cy="9" r="5"/><path d="m12.6 12.6 7.9 7.9"/><circle cx="17.5" cy="5.5" r="2.5"/><path d="M7 7.5a2 2 0 0 1 2-1.5"/>');
+// Plasma Globe: a globe with branching filaments.
+ICONS.plasma = svg('<circle cx="12" cy="10" r="7"/><path d="M9 20.5h6M10 17v3.5M14 17v3.5"/><path d="M12 10 8.5 6.5M12 10l4-2.5M12 10l1 4.5M8.5 6.5l-.8-1.2M16 7.5l1.2-.3"/><circle cx="12" cy="10" r="1" fill="currentColor"/>');
+// Snap!: a strand breaking into pieces.
+ICONS.snap = svg('<path d="M3 16c2-1 3.5-2.5 5-4"/><path d="M10 10.5c1-1.2 2-2.2 3.2-3"/><path d="M15.5 6c1.8-.9 3.6-1.3 5.5-1.5"/><path d="m8.8 8.2.6 1.4M13.2 4.6l.3 1.4M11 12.5l1.3.6"/>');
+// Hourglass.
+ICONS.hourglass = svg('<path d="M6 3.5h12M6 20.5h12"/><path d="M7.5 3.5c0 4.5 4.5 6 4.5 8.5s-4.5 4-4.5 8.5M16.5 3.5c0 4.5-4.5 6-4.5 8.5s4.5 4 4.5 8.5"/><path d="M9.5 18.5c.8-1 1.6-1.5 2.5-1.5s1.7.5 2.5 1.5Z" fill="currentColor"/>');
+// Honey Drizzle: a dipper with a coiling thread.
+ICONS.honey = svg('<path d="M12 3v5"/><rect x="9.5" y="8" width="5" height="4" rx="1.6"/><path d="M12 12v4"/><path d="M8 19.5c1-1.5 2-1.8 4-1.8s3 .3 4 1.8M9.5 18c.8-1 1.5-1.2 2.5-1.2s1.7.2 2.5 1.2"/>');
 
 const FALLBACK = svg('<circle cx="12" cy="12" r="7"/><path d="M12 8v4l2.5 2.5"/>');
 

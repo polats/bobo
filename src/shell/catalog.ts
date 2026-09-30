@@ -27,6 +27,10 @@ const CATALOG: Record<string, Entry> = {
   merge: { added: '2026-09-29T10:18:47-04:00', category: 'Soft & squishy' },
   rinse: { added: '2026-09-29T10:23:12-04:00', category: 'Make & reveal' },
   sandjar: { added: '2026-09-29T10:21:38-04:00', category: 'Make & reveal' },
+  plasma: { added: '2026-09-29T21:15:22-04:00', category: 'Make & reveal' },
+  snap: { added: '2026-09-29T21:15:22-04:00', category: 'Smash & build' },
+  hourglass: { added: '2026-09-29T21:15:22-04:00', category: 'Sand & powder' },
+  honey: { added: '2026-09-29T21:15:22-04:00', category: 'Fluids' },
   bubble: { added: '2026-09-29T20:28:32-04:00', category: 'Fluids' },
   chladni: { added: '2026-09-29T20:02:47-04:00', category: 'Make & reveal' },
   glass: { added: '2026-09-29T20:02:47-04:00', category: 'Make & reveal' },
@@ -87,7 +91,7 @@ const FELT = ['rinse', 'mow', 'peel', 'pour', 'spool', 'dig', 'foundry', 'cloth'
 /** A toy's updates, newest first (the shared sound and haptics passes included). */
 export function updates(id: string): Update[] {
   const own = [...(RINGING.includes(id) ? [RINGS] : []), ...(FELT.includes(id) ? [FEEL] : []), ...(UPDATES[id] ?? [])];
-  return own.includes(SOUND) || ['merge', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints', 'chladni', 'glass', 'frost', 'bubble'].includes(id) ? own : [...own, SOUND];
+  return own.includes(SOUND) || ['merge', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints', 'chladni', 'glass', 'frost', 'bubble', 'plasma', 'snap', 'hourglass', 'honey'].includes(id) ? own : [...own, SOUND];
 }
 
 /** Latest notable update, if any. */
