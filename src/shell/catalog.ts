@@ -27,6 +27,7 @@ const CATALOG: Record<string, Entry> = {
   merge: { added: '2026-09-29T10:18:47-04:00', category: 'Soft & squishy' },
   rinse: { added: '2026-09-29T10:23:12-04:00', category: 'Make & reveal' },
   sandjar: { added: '2026-09-29T10:21:38-04:00', category: 'Make & reveal' },
+  bubble: { added: '2026-09-29T20:28:32-04:00', category: 'Fluids' },
   chladni: { added: '2026-09-29T20:02:47-04:00', category: 'Make & reveal' },
   glass: { added: '2026-09-29T20:02:47-04:00', category: 'Make & reveal' },
   frost: { added: '2026-09-29T20:02:47-04:00', category: 'Make & reveal' },
