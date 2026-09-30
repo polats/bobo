@@ -173,6 +173,8 @@ uniform sampler2D uHoney;  // r: honey depth (mm), g: soak
 uniform float uHalf;
 uniform vec2 uOffset;
 uniform float uTexel;
+uniform float uMesh;
+uniform float uThick;
 out vec2 vUv;
 out vec3 vWorld;
 out float vFar;
@@ -180,18 +182,23 @@ out float vSdf;
 void main() {
   vec2 local = (aUv * 2.0 - 1.0) * uHalf;
   vec4 base = texture(uBase, aUv);
-  vFar = base.g > 2.9 * 2000.0 * uHalf * uTexel ? 1.0 : 0.0;
-  float y = (base.r + texture(uHoney, aUv).r) * 0.001;
-  // Vertices either side of the bread's outline slide onto it, so the crust wall is vertical and
-  // clean instead of stair-stepped by the grid.
-  float cellMm = 2000.0 * uHalf * uTexel;
+  float cellMm = 2000.0 * uHalf * uMesh;
+  vFar = base.g > 2.9 * cellMm ? 1.0 : 0.0;
+  // Vertices fall between the height texels; near the edge bilinear filtering would mix the plate's
+  // level into the bread's: pin each side to its own range.
+  float b = base.g > 0.0 ? -uThick : max(base.r, -0.3 * uThick);
   vSdf = base.g;
+  // Vertices either side of the outline slide onto it at the wall's top height (the crust wall is
+  // its own mesh, built from the exact outline), so the top ends cleanly at the edge.
   if (base.g > -0.9 * cellMm && base.g < 2.9 * cellMm) {
     vSdf = -0.01;
+    float e = min(1.0, 0.9 * cellMm / 2.5);
+    b = -0.3 * uThick * (1.0 - sqrt(max(0.0, 1.0 - (1.0 - e) * (1.0 - e))));
     vec2 g = vec2(texture(uBase, aUv + vec2(uTexel, 0)).g - texture(uBase, aUv - vec2(uTexel, 0)).g,
                   texture(uBase, aUv + vec2(0, uTexel)).g - texture(uBase, aUv - vec2(0, uTexel)).g);
     if (length(g) > 1e-4) local -= normalize(g) * base.g * 0.001;
   }
+  float y = (b + texture(uHoney, aUv).r) * 0.001;
   vUv = aUv;
   vWorld = vec3(local.x + uOffset.x, y, local.y + uOffset.y);
   gl_Position = uViewProj * vec4(vWorld, 1.0);
@@ -205,7 +212,7 @@ uniform sampler2D uHoney;
 uniform float uHalf;
 uniform vec2 uOffset;
 uniform float uTexel;
-uniform float uPancake;
+uniform sampler2D uAlbedo;
 uniform vec3 uAbsorb;
 uniform vec3 uScatter;
 uniform float uCloud;
@@ -215,75 +222,59 @@ in float vFar;
 in float vSdf;
 out vec4 o;
 
-vec3 breadAlbedo(vec2 p, float sdf, float pore) {
-  if (uPancake > 0.5) {
-    float r = length(p);
-    vec3 c = mix(vec3(0.66, 0.38, 0.14), vec3(0.8, 0.54, 0.24), smoothstep(0.0, 0.05, r));
-    c = mix(c, vec3(0.93, 0.78, 0.5), smoothstep(-6.0, -1.5, sdf));
-    c *= 0.86 + 0.28 * fbm(p * 160.0);
-    c = mix(c, vec3(0.5, 0.27, 0.1), smoothstep(0.62, 0.8, fbm(p * 420.0 + 3.0)) * 0.55);
-    return c;
-  }
-  // Toasted crumb: paler in the middle, deeper toward the crust, in blotches, with fine grain.
-  float r = length(p / vec2(0.048, 0.046));
-  vec3 crumb = mix(vec3(0.95, 0.8, 0.52), vec3(0.86, 0.6, 0.3), smoothstep(0.15, 0.85, r + (fbm(p * 45.0) - 0.5) * 0.7));
-  crumb = mix(crumb, vec3(0.66, 0.4, 0.17), smoothstep(0.58, 0.82, fbm(p * 22.0 + 3.0)) * 0.55);
-  crumb *= 0.9 + 0.2 * fbm(p * 420.0);
-  crumb *= 1.0 - pore;
-  vec3 crust = mix(vec3(0.44, 0.23, 0.09), vec3(0.6, 0.35, 0.14), fbm(p * 300.0));
-  return mix(crumb, crust, smoothstep(-4.5, -3.0, sdf));
-}
-
-float heightAt(vec2 uv) { return (texture(uBase, uv).r + texture(uHoney, uv).r) * 0.001; }
-float baseAt(vec2 uv) { return texture(uBase, uv).r * 0.001; }
 
 void main() {
   vec2 local = vWorld.xz - uOffset;
-  vec4 base = texture(uBase, vUv);
   vec4 hon = texture(uHoney, vUv);
   // The outline distance comes from the vertices: the wall between snapped vertices is all bread.
   float sdf = vSdf;
   float hmm = hon.r;
-  float e = uTexel, dx = 2.0 * uHalf * e;
-  vec3 n = normalize(vec3(heightAt(vUv - vec2(e, 0)) - heightAt(vUv + vec2(e, 0)), 2.0 * dx, heightAt(vUv - vec2(0, e)) - heightAt(vUv + vec2(0, e))));
-  vec3 nb = normalize(vec3(baseAt(vUv - vec2(e, 0)) - baseAt(vUv + vec2(e, 0)), 2.0 * dx, baseAt(vUv - vec2(0, e)) - baseAt(vUv + vec2(0, e))));
+  // Bare plate beyond the bread: the plate mesh underneath shows instead.
+  // (Triangles reaching out to the plate from the outline would slope down beside the wall.)
+  if (vFar > 0.001 && hmm < 0.003) discard;
+  // Heights are in mm; normals from the neighbours (the bread's own, then with the honey on top).
+  float e = uTexel, dxm = 4000.0 * uHalf * e;
+  vec2 ex = vec2(e, 0.0), ey = vec2(0.0, e);
+  vec2 tl = texture(uBase, vUv - ex).rg, tr = texture(uBase, vUv + ex).rg;
+  vec2 td = texture(uBase, vUv - ey).rg, tu = texture(uBase, vUv + ey).rg;
+  float bl = tl.x, br = tr.x, bd = td.x, bu = tu.x;
+  vec3 nb = normalize(vec3(bl - br, dxm, bd - bu));
+  // On the crust wall the height texels straddle the edge and give a noisy normal: face it
+  // straight out from the outline instead.
+  if (nb.y < 0.3) {
+    vec2 g = vec2(tr.y - tl.y, tu.y - td.y);
+    if (dot(g, g) > 1e-8) nb = normalize(vec3(normalize(g), 0.25));
+  }
+  if (sdf > 0.0) nb = vec3(0.0, 1.0, 0.0);
   vec3 v = normalize(uEye - vWorld);
   float ndl = max(dot(nb, uLight), 0.0);
-  // Bare plate beyond the bread: the plate mesh underneath shows instead.
-  if (vFar > 0.999 && hmm < 0.003) discard;
-  // The plate is flat (the bread's wall next to it must not tilt its normal).
-  if (sdf > 0.0) {
-    nb = vec3(0.0, 1.0, 0.0);
-    if (hmm < 0.003) n = nb;
-  }
   vec3 bare;
   if (sdf > 0.0) {
     // Plate glaze.
-    vec3 c = vec3(0.86, 0.87, 0.85) * (0.42 + 0.62 * ndl);
-    c += env(reflect(-v, nb)) * (0.05 + 0.95 * pow(1.0 - max(dot(nb, v), 0.0), 5.0)) * 0.9;
-    bare = c;
+    bare = vec3(0.86, 0.87, 0.85) * (0.42 + 0.62 * ndl);
+    bare += env(reflect(-v, nb)) * (0.05 + 0.95 * pow(1.0 - max(dot(nb, v), 0.0), 5.0)) * 0.9;
   } else {
-    float crown = uPancake > 0.5 ? 1.0 * (1.0 - dot(local, local) / 0.0031) : 0.8 * (1.0 - dot(local, local) / 0.0025);
-    float pore = uPancake > 0.5 ? 0.0 : clamp((crown - base.r) * 0.9, 0.0, 0.42) * smoothstep(-2.5, -4.0, sdf);
-    vec3 alb = toLin(breadAlbedo(local, sdf, pore));
+    vec3 alb = toLin(texture(uAlbedo, vUv).rgb);
     // Soaked crumb goes darker and richer.
     alb = mix(alb, alb * vec3(0.6, 0.47, 0.3), hon.g * 0.75);
     bare = alb * (0.32 + 0.85 * ndl);
-    bare += env(reflect(-v, nb)) * 0.02;
   }
   if (hmm < 0.003) {
     o = vec4(toOut(bare), 1.0);
     return;
   }
+  float hl = texture(uHoney, vUv - ex).r, hr = texture(uHoney, vUv + ex).r;
+  float hd = texture(uHoney, vUv - ey).r, hu = texture(uHoney, vUv + ey).r;
+  vec3 n = normalize(vec3(bl + hl - br - hr, dxm, bd + hd - bu - hu));
   // The honey film: bread seen through it (displaced by refraction), tinted by the path length
   // down to the bread and back out; cloudy liquids turn opaque with depth.
   float cv = max(dot(n, v), 0.08);
   float path = hmm * (1.0 / cv + 1.0 / max(dot(n, uLight), 0.25));
   vec3 T = exp(-uAbsorb * path);
-  vec2 off = -n.xz * hmm * 0.0006;
   vec3 under = bare;
   if (sdf <= 0.0) {
-    vec3 alb = toLin(breadAlbedo(local + off, sdf, 0.0));
+    vec2 off = -n.xz * hmm * 0.0006;
+    vec3 alb = toLin(texture(uAlbedo, vUv + off / (2.0 * uHalf)).rgb);
     alb = mix(alb, alb * vec3(0.6, 0.47, 0.3), hon.g * 0.75);
     under = alb * (0.32 + 0.85 * ndl);
   }
@@ -447,5 +438,63 @@ void main() {
   float r = length(vB.xy);
   float k = vB.z * smoothstep(1.0, 0.2, r);
   o = vec4(vec3(0.35, 0.25, 0.18) * k, 1.0 - k);
+}
+`;
+
+/** Bake the bread's colour (crumb, pores, crust, or pancake) into a texture, once per slice. */
+export const ALBEDO_FS = /* glsl */ `#version 300 es
+${COMMON}
+in vec2 vUv;
+uniform sampler2D uBase;
+uniform float uHalf;
+uniform float uPancake;
+out vec4 o;
+vec3 breadAlbedo(vec2 p, float sdf, float pore) {
+  if (uPancake > 0.5) {
+    float r = length(p);
+    vec3 c = mix(vec3(0.66, 0.38, 0.14), vec3(0.8, 0.54, 0.24), smoothstep(0.0, 0.05, r));
+    c = mix(c, vec3(0.93, 0.78, 0.5), smoothstep(-6.0, -1.5, sdf));
+    c *= 0.86 + 0.28 * fbm(p * 160.0);
+    c = mix(c, vec3(0.5, 0.27, 0.1), smoothstep(0.62, 0.8, fbm(p * 420.0 + 3.0)) * 0.55);
+    return c;
+  }
+  // Toasted crumb: paler in the middle, deeper toward the crust, in blotches, with fine grain.
+  float r = length(p / vec2(0.048, 0.046));
+  vec3 crumb = mix(vec3(0.95, 0.8, 0.52), vec3(0.86, 0.6, 0.3), smoothstep(0.15, 0.85, r + (fbm(p * 45.0) - 0.5) * 0.7));
+  crumb = mix(crumb, vec3(0.66, 0.4, 0.17), smoothstep(0.58, 0.82, fbm(p * 22.0 + 3.0)) * 0.55);
+  crumb *= 0.9 + 0.2 * fbm(p * 420.0);
+  crumb *= 1.0 - pore;
+  vec3 crust = mix(vec3(0.44, 0.23, 0.09), vec3(0.6, 0.35, 0.14), fbm(p * 300.0));
+  return mix(crumb, crust, smoothstep(-4.5, -3.0, sdf));
+}
+
+
+void main() {
+  vec2 p = (vUv * 2.0 - 1.0) * uHalf;
+  vec4 base = texture(uBase, vUv);
+  float sdf = base.g;
+  float crown = 0.8 * (1.0 - dot(p, p) / 0.0025);
+  float pore = uPancake > 0.5 ? 0.0 : clamp((crown - base.r) * 0.9, 0.0, 0.42) * smoothstep(-2.5, -4.0, sdf);
+  o = vec4(breadAlbedo(p, sdf, pore), 1.0);
+}
+`;
+
+/** The bread's side wall (crust), a strip around the exact outline. vExtra.x: around (0..1), y: up (0..1). */
+export const WALL_FS = /* glsl */ `#version 300 es
+${COMMON}
+uniform float uPancake;
+in vec3 vWorld;
+in vec3 vNormal;
+in vec2 vExtra;
+in vec3 vLocal;
+out vec4 o;
+void main() {
+  vec3 n = normalize(vNormal);
+  float g = fbm(vec2(vExtra.x * 900.0, vExtra.y * 6.0));
+  vec3 crust = uPancake > 0.5 ? mix(vec3(0.93, 0.78, 0.5), vec3(0.8, 0.58, 0.3), g) : mix(vec3(0.42, 0.22, 0.08), vec3(0.62, 0.37, 0.15), g);
+  // Darker toward the plate, a little lighter at the rounded top.
+  crust *= 0.75 + 0.35 * vExtra.y;
+  vec3 c = toLin(crust) * (0.35 + 0.8 * max(dot(n, uLight) * 0.6 + 0.4, 0.0));
+  o = vec4(toOut(c), 1.0);
 }
 `;

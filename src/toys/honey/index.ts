@@ -3,7 +3,7 @@ import type { Loop, Slip } from '../../shell/sound';
 import { LIQUIDS, type Liquid, type LiquidId } from './liquids';
 import { Pool, type Base } from './pool';
 import { FREE, NOZZLE, STUCK, Thread, type ThreadHost } from './thread';
-import { HEAD_LEN, HEAD_R, LIGHT, Renderer, headEnv, norm, woodR, type DipperPose, type Ribbon, type Vec3 } from './render';
+import { HEAD_LEN, HEAD_R, LIGHT, Renderer, type DipperPose, type DrawOpts, type Ribbon, type Vec3 } from './render';
 
 export const honeyToy: Toy = {
   id: 'honey',
@@ -68,8 +68,6 @@ const H_MIN = 0.004;
 const H_MAX = 0.14;
 const CORNERS = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
 const BLOB_INDEX = new Uint32Array([0, 2, 1, 1, 2, 3]);
-/** Shadow strip: five vertices across (soft edge, dark band, bright focus). */
-const ACROSS = [-1, -0.45, 0, 0.45, 1];
 /** Merged rope stays visible this long (s). */
 const ECHO = 0.35;
 /** How far from the bread's centre the dipper can pour (m). */
@@ -99,6 +97,9 @@ class Honey implements ToyInstance {
   private load = 1;
   private lean = 0;
   private pose: DipperPose = { origin: [0, 0, 0], ax: [1, 0, 0], ay: [0, 1, 0], az: [0, 0, 1] };
+  private threadOut: Ribbon = { data: new Float32Array(1), index: new Uint32Array(1), floats: 0, count: 0 };
+  private shadowOut: Ribbon = { data: new Float32Array(1), index: new Uint32Array(1), floats: 0, count: 0 };
+  private blobOut: Ribbon = { data: new Float32Array(1), index: new Uint32Array(1), floats: 0, count: 0 };
   private fingers = new Map<number, Finger>();
   private used = false;
   private t = 0;
@@ -117,7 +118,14 @@ class Honey implements ToyInstance {
   private host: ThreadHost;
   private slip: Slip;
   private pour: Loop;
-  private dev = { drive: 0, driveZ: 0 };
+  private dev = { drive: 0, driveZ: 0, noGov: false };
+  private frameN = 0;
+  private stepEma = 0;
+  private dtEma = 1 / 60;
+  private cpuEma = 0;
+  private slowTime = 0;
+  private govWait = 0;
+  private drawOpts: DrawOpts;
   private snapLog: number[][] = [];
   private lastDt = 0;
   private perf = { sim: 0, pool: 0, draw: 0 };
@@ -128,6 +136,8 @@ class Honey implements ToyInstance {
   private echoN = 0;
   private shadowBuf = { data: new Float32Array(1), index: new Uint32Array(1) };
   private blobData = new Float32Array(4 * 7);
+  private shadowPt = new Float64Array(3);
+  private hit: Vec3 = [0, 0, 0];
   private style: HTMLStyleElement;
   private hint: HTMLDivElement;
   private dock: HTMLDivElement;
@@ -136,6 +146,7 @@ class Honey implements ToyInstance {
 
   constructor(private ctx: ToyContext) {
     this.view = new Renderer(ctx.canvas, this.pool);
+    this.drawOpts = { offset: this.offset, pose: this.pose, liquid: this.liquid, pancake: false, half: this.pool.half, thickness: this.pool.thickness, coat: true };
     this.slip = ctx.sound.slip();
     this.pour = ctx.sound.loop('trickle');
     this.host = {
@@ -207,8 +218,17 @@ class Honey implements ToyInstance {
           // The nozzle eases there (the thread sim sees the motion, not a jump).
           this.target = [xcm / 100, hcm / 100, zcm / 100];
         },
-        drive: (vxcm: number, vzcm = 0) => (this.dev = { drive: vxcm / 100, driveZ: vzcm / 100 }),
-        stop: () => (this.dev = { drive: 0, driveZ: 0 }),
+        drive: (vxcm: number, vzcm = 0) => {
+          this.dev.drive = vxcm / 100;
+          this.dev.driveZ = vzcm / 100;
+        },
+        /** Hold the GPU governor off (to measure a fixed quality level). */
+        governor: (on: boolean) => (this.dev.noGov = !on),
+        maxSub: (n: number) => (this.thread.maxSub = n),
+        stop: () => {
+          this.dev.drive = 0;
+          this.dev.driveZ = 0;
+        },
         liquid: (id: LiquidId) => this.setLiquid(id),
         mu: (v: number) => this.setMu(v),
         flow: (f: number) => (this.tune.flow = f),
@@ -223,6 +243,7 @@ class Honey implements ToyInstance {
         measure: (secs = 1.5) => this.measure(secs),
         snaps: () => this.snapLog,
         twist: (on = true) => (this.thread.twist = on),
+        degrade: () => this.view.degrade(),
         camera: (deg: number) => {
           this.view.elevation = deg;
           this.view.camera();
@@ -419,10 +440,17 @@ class Honey implements ToyInstance {
     th.a0 = 0.0007 + 0.0011 * Math.sqrt(this.load);
     th.ceiling = this.pool.peak + 0.004;
     const landsBefore = this.landCount;
+    const ts = performance.now();
     th.step(simDt, this.prevNoz[0], this.prevNoz[1], this.prevNoz[2], this.noz[0], this.noz[1], this.noz[2], this.host);
-    for (let i = 0; i < 3; i++) this.nozVel[i] += ((this.noz[i] - this.prevNoz[i]) / Math.max(1e-4, simDt) - this.nozVel[i]) * 0.2;
-    this.prevNoz = [...this.noz];
+    const stepMs = performance.now() - ts;
+    for (let i = 0; i < 3; i++) {
+      this.nozVel[i] += ((this.noz[i] - this.prevNoz[i]) / Math.max(1e-4, simDt) - this.nozVel[i]) * 0.2;
+      this.prevNoz[i] = this.noz[i];
+    }
     const t1 = performance.now();
+    // (Stepping the film every other frame was tried: it shifts where the coil lands on its own
+    // mound and lowered the fast coils' frequency by 10-15%, so it runs every frame; it's cheap.)
+    this.frameN++;
     this.pool.step(simDt);
     const t2 = performance.now();
     this.simT += simDt;
@@ -430,25 +458,66 @@ class Honey implements ToyInstance {
     // Coil counter and landing rate.
     const landed = this.landCount - landsBefore;
     this.landRate += (landed / dt - this.landRate) * 0.1;
-    const moving = Math.hypot(this.nozVel[0], this.nozVel[2]);
+    const moving = Math.sqrt(this.nozVel[0] * this.nozVel[0] + this.nozVel[2] * this.nozVel[2]);
     const hz = this.coilRate(0.5);
     this.coilHz += (hz - this.coilHz) * 0.15;
 
     this.buildGeometry();
     this.view.uploadHoney(this.pool);
-    this.view.draw({ offset: this.offset, pose: this.pose, liquid: this.liquid, pancake: this.base === 'pancake', half: this.pool.half, thickness: this.pool.thickness, coat: true });
+    const o = this.drawOpts;
+    o.pose = this.pose;
+    o.liquid = this.liquid;
+    o.pancake = this.base === 'pancake';
+    o.thickness = this.pool.thickness;
+    this.view.draw(o);
     const t3 = performance.now();
     const a = 0.05;
     this.perf.sim += (t1 - t0 - this.perf.sim) * a;
     this.perf.pool += (t2 - t1 - this.perf.pool) * a;
     this.perf.draw += (t3 - t2 - this.perf.draw) * a;
+    this.govern(dt, stepMs, t3 - t0);
 
     this.sound(moving);
-    const H = (this.noz[1] - under) * 100;
-    this.readout.textContent = `${H.toFixed(1)} cm up` + (this.coilHz > 0.5 && moving < 0.012 ? ` · coiling ${this.coilHz < 10 ? this.coilHz.toFixed(1) : Math.round(this.coilHz)} Hz` : moving >= 0.012 ? ` · moving ${Math.round(moving * 100)} cm/s` : '');
-    this.loadBar.style.transform = `scaleX(${this.load.toFixed(3)})`;
-    this.hint.classList.toggle('show', !this.used && t > 0.8);
-    ctx.setStatus(`${th.n} nodes · ${th.substeps} substeps · ${(th.Q * 1e6).toFixed(2)} mL/s`);
+    // Text only a few times a second (it allocates strings and touches the DOM).
+    if (this.frameN % 8 === 0) {
+      const H = (this.noz[1] - under) * 100;
+      this.readout.textContent = `${H.toFixed(1)} cm up` + (this.coilHz > 0.5 && moving < 0.012 ? ` · coiling ${this.coilHz < 10 ? this.coilHz.toFixed(1) : Math.round(this.coilHz)} Hz` : moving >= 0.012 ? ` · moving ${Math.round(moving * 100)} cm/s` : '');
+      this.loadBar.style.transform = `scaleX(${this.load.toFixed(3)})`;
+      this.hint.classList.toggle('show', !this.used && t > 0.8);
+      ctx.setStatus(`${th.n} nodes · ${th.substeps} substeps · ${(th.Q * 1e6).toFixed(2)} mL/s${this.view.quality ? ` · q${this.view.quality}` : ''}`);
+    }
+  }
+
+  /**
+   * Keep 60 fps on slow phones. CPU: if the thread step runs long, allow fewer substeps (coarser in
+   * time, same physics), and give them back when there's room. GPU: if frames run long while the CPU
+   * work is small, the renderer steps down its scene resolution and MSAA (one level at a time).
+   */
+  private govern(dt: number, stepMs: number, cpuMs: number) {
+    const th = this.thread;
+    this.stepEma += (stepMs - this.stepEma) * 0.1;
+    this.dtEma += (dt - this.dtEma) * 0.05;
+    this.cpuEma += (cpuMs - this.cpuEma) * 0.05;
+    if (this.govWait > 0) this.govWait--;
+    // Normally the substep count is set by the CFL rule alone (a 110 Hz coil at 14 cm wants ~36).
+    // Only if the step itself runs long is it capped, never below 24: under that, the fastest coils
+    // get fewer than a dozen substeps a turn and fall apart.
+    else if (this.stepEma > 6 && th.maxSub > 24) {
+      th.maxSub -= 2;
+      this.govWait = 20;
+    } else if (this.stepEma < 3 && th.maxSub < 36) {
+      th.maxSub += 2;
+      this.govWait = 60;
+    }
+    // Slow frames (under ~52 fps) for over a second with the CPU not to blame: drop a level (two if
+    // far off, under ~40 fps).
+    if (this.frameN > 60 && this.dtEma > 1 / 52 && this.cpuEma < 9) this.slowTime += dt;
+    else this.slowTime = 0;
+    if (this.slowTime > 1.2 && !this.dev.noGov) {
+      if (this.view.degrade() && this.dtEma > 1 / 40) this.view.degrade();
+      this.slowTime = 0;
+      this.dtEma = 1 / 60;
+    }
   }
 
   private input(dt: number) {
@@ -464,7 +533,7 @@ class Honey implements ToyInstance {
         const near = Math.min(Math.hypot(px - n[0], py - n[1]), Math.hypot(px - head[0], py - head[1])) < 110 * pr;
         const far = v.project([this.offset[0], 0, this.offset[1] - 0.06]);
         const role = near || py < far[1] ? 'dipper' : 'plate';
-        const hit = role === 'dipper' ? hitZ(ray, this.target[2]) : hitY(ray, 0);
+        const hit = role === 'dipper' ? hitZ(ray, this.target[2], this.hit) : hitY(ray, 0, this.hit);
         const grab: Vec3 = role === 'dipper' ? [this.target[0] - hit[0], this.target[1] - hit[1], 0] : [this.offsetTarget[0] - hit[0], 0, this.offsetTarget[1] - hit[2]];
         f = { role, grab };
         this.fingers.set(p.id, f);
@@ -473,17 +542,17 @@ class Honey implements ToyInstance {
       }
       if (!p.down) continue;
       if (f.role === 'dipper') {
-        const hit = hitZ(ray, this.target[2]);
+        const hit = hitZ(ray, this.target[2], this.hit);
         this.target[0] = Math.max(this.offsetTarget[0] - REACH, Math.min(this.offsetTarget[0] + REACH, hit[0] + f.grab[0]));
         this.target[1] = Math.max(H_MIN, Math.min(H_MAX, hit[1] + f.grab[1]));
       } else {
-        const hit = hitY(ray, 0);
+        const hit = hitY(ray, 0, this.hit);
         // Slide the plate, keeping the dipper over the bread.
         this.offsetTarget[0] = Math.max(this.noz[0] - REACH, Math.min(this.noz[0] + REACH, hit[0] + f.grab[0]));
         this.offsetTarget[1] = Math.max(this.noz[2] - REACH, Math.min(this.noz[2] + REACH, hit[2] + f.grab[2]));
       }
     }
-    for (const id of [...this.fingers.keys()]) if (!ctx.pointers.active.has(id)) this.fingers.delete(id);
+    for (const id of this.fingers.keys()) if (!ctx.pointers.active.has(id)) this.fingers.delete(id);
     void dt;
   }
 
@@ -494,84 +563,62 @@ class Honey implements ToyInstance {
     this.lean += (Math.max(-0.5, Math.min(0.5, -this.nozVel[0] * 2.5)) - this.lean) * 0.12;
     const pitch = ((14 + this.tune.tilt) * Math.PI) / 180;
     const yaw = (28 * Math.PI) / 180;
-    const ax = norm([Math.cos(pitch) * Math.cos(yaw) + this.lean * 0.3, Math.sin(pitch), Math.cos(pitch) * Math.sin(yaw)]);
-    const up: Vec3 = [0, 1, 0];
-    const d0 = up[0] * ax[0] + up[1] * ax[1] + up[2] * ax[2];
-    const ay = norm([up[0] - ax[0] * d0, up[1] - ax[1] * d0, up[2] - ax[2] * d0]);
-    const az: Vec3 = [ax[1] * ay[2] - ax[2] * ay[1], ax[2] * ay[0] - ax[0] * ay[2], ax[0] * ay[1] - ax[1] * ay[0]];
-    // Straight down across the axis is -ay; the lowest point of the coat sets where the thread leaves.
-    const L = this.load, tl = 0.00025 + 0.0022 * L;
-    const fill = (s: number) => {
-      if (s < 0) return (tl + 0.0012) * Math.sqrt(Math.max(0, 1 - (s / 0.0015) ** 2));
-      if (s > HEAD_LEN) return Math.max(woodR(s) + tl * 0.3 * Math.max(0, 1 - (s - HEAD_LEN) / 0.004), 0);
-      return Math.max(woodR(s) + tl * 0.35, headEnv(s) * 0.9 + tl * 0.8);
-    };
-    const sag = tl * 1.1;
-    const nd = Math.sqrt(Math.max(0, 1 - ax[1] * ax[1]));
-    let sBest = 0.01, yBest = Infinity;
-    for (let s = 0.004; s <= HEAD_LEN - 0.004; s += 0.0005) {
-      const y = s * ax[1] - (fill(s) + sag) * nd;
-      if (y < yBest) {
-        yBest = y;
-        sBest = s;
-      }
-    }
-    const neck = 0.0012 + 0.004 * L * Math.min(1, this.thread.Q / Q_REF + 0.2);
-    const t = this.t;
-    const coat = (s: number, down: number, phi: number) => {
-      let r = fill(s) + sag * down * down;
-      if (s >= 0 && s <= HEAD_LEN) {
-        // Drops hanging off the lowest point of each ring, slowly swelling and letting go.
-        const ring = Math.round((s - 0.003) / 0.0046);
-        const sc = 0.003 + ring * 0.0046;
-        const ph = Math.sin(t * (0.7 + 0.13 * ring) + ring * 2.1);
-        const drop = L * 0.0022 * (0.55 + 0.45 * ph) * Math.exp(-(((s - sc) / 0.0011) ** 2));
-        r += drop * Math.pow(down, 10);
-      }
-      // The neck the thread leaves from.
-      r += neck * Math.exp(-(((s - sBest) / 0.0024) ** 2)) * Math.pow(down, 8);
-      void phi;
-      return r;
-    };
-    const drop: Vec3 = [-ay[0], -ay[1], -ay[2]];
-    const reach = fill(sBest) + sag + neck;
-    const origin: Vec3 = [this.noz[0] - ax[0] * sBest - drop[0] * reach, this.noz[1] - ax[1] * sBest - drop[1] * reach, this.noz[2] - ax[2] * sBest - drop[2] * reach];
-    this.pose = { origin, ax, ay, az };
-    v.setCoat(this.pose, coat);
+    const { ax, ay, az, origin } = this.pose;
+    ax[0] = Math.cos(pitch) * Math.cos(yaw) + this.lean * 0.3;
+    ax[1] = Math.sin(pitch);
+    ax[2] = Math.cos(pitch) * Math.sin(yaw);
+    normInPlace(ax);
+    // ay: world up made perpendicular to the axis; az completes the frame.
+    ay[0] = -ax[0] * ax[1];
+    ay[1] = 1 - ax[1] * ax[1];
+    ay[2] = -ax[2] * ax[1];
+    normInPlace(ay);
+    az[0] = ax[1] * ay[2] - ax[2] * ay[1];
+    az[1] = ax[2] * ay[0] - ax[0] * ay[2];
+    az[2] = ax[0] * ay[1] - ax[1] * ay[0];
+    // The coat, and where its lowest point (the thread's neck) puts the dipper.
+    v.setCoat(this.pose, this.noz[0], this.noz[1], this.noz[2], this.load, this.thread.Q / Q_REF, this.t);
+    this.thread.radii();
     v.setThread(this.threadRibbon());
     v.setShadow(this.shadowRibbon());
     v.setBlob(this.blobQuad());
   }
 
+  // Ribbon builder state (vertex and index counts) and one camera-facing pair per call.
+  private rv = 0;
+  private ri = 0;
+  private rPut(x: number, y: number, z: number, sx: number, sy: number, sz: number, r: number, rd: number) {
+    const d = this.ribbon.data, cover = Math.min(1, r / rd);
+    let o = this.rv * 9;
+    d[o] = x - sx * rd; d[o + 1] = y - sy * rd; d[o + 2] = z - sz * rd;
+    d[o + 3] = sx; d[o + 4] = sy; d[o + 5] = sz;
+    d[o + 6] = -1; d[o + 7] = r; d[o + 8] = cover;
+    o += 9;
+    d[o] = x + sx * rd; d[o + 1] = y + sy * rd; d[o + 2] = z + sz * rd;
+    d[o + 3] = sx; d[o + 4] = sy; d[o + 5] = sz;
+    d[o + 6] = 1; d[o + 7] = r; d[o + 8] = cover;
+    this.rv += 2;
+  }
+
+  private rLink() {
+    const idx = this.ribbon.index, a = this.rv - 4;
+    let ic = this.ri;
+    idx[ic++] = a; idx[ic++] = a + 1; idx[ic++] = a + 2;
+    idx[ic++] = a + 1; idx[ic++] = a + 3; idx[ic++] = a + 2;
+    this.ri = ic;
+  }
+
+  /** One point of the echo rope: a camera-facing pair across the horizontal tangent (tx, tz). */
   private threadRibbon(): Ribbon {
-    const th = this.thread, n = th.n, v = this.view, eye = v.eye;
-    const F = 9;
+    const th = this.thread, n = th.n, v = this.view;
+    const e0 = v.eye[0], e1 = v.eye[1], e2 = v.eye[2], pxs = v.pxScale;
     const maxV = (n + 8) * 2 + 8 + 1024 * 4;
-    if (this.ribbon.data.length < maxV * F) {
-      this.ribbon.data = new Float32Array(maxV * F * 2);
+    if (this.ribbon.data.length < maxV * 9) {
+      this.ribbon.data = new Float32Array(maxV * 9 * 2);
       this.ribbon.index = new Uint32Array(maxV * 6 * 2);
     }
-    const d = this.ribbon.data, idx = this.ribbon.index;
-    let vtx = 0, ic = 0;
-    const put = (x: number, y: number, z: number, sx: number, sy: number, sz: number, r: number, rd: number) => {
-      const cover = Math.min(1, r / rd);
-      for (const s of [-1, 1]) {
-        const o = vtx * F;
-        d[o] = x + sx * rd * s;
-        d[o + 1] = y + sy * rd * s;
-        d[o + 2] = z + sz * rd * s;
-        d[o + 3] = sx; d[o + 4] = sy; d[o + 5] = sz;
-        d[o + 6] = s;
-        d[o + 7] = r;
-        d[o + 8] = cover;
-        vtx++;
-      }
-    };
-    const link = () => {
-      const a = vtx - 4;
-      idx[ic++] = a; idx[ic++] = a + 1; idx[ic++] = a + 2;
-      idx[ic++] = a + 1; idx[ic++] = a + 3; idx[ic++] = a + 2;
-    };
+    this.rv = 0;
+    this.ri = 0;
     let seg = 0;
     for (let i = 0; i < n; i++) {
       const prevOk = i > 0 && !th.cut[i - 1];
@@ -579,32 +626,43 @@ class Honey implements ToyInstance {
       if (!prevOk && !nextOk) continue;
       const a = prevOk ? i - 1 : i, b = nextOk ? i + 1 : i;
       let tx = th.x[b] - th.x[a], ty = th.y[b] - th.y[a], tz = th.z[b] - th.z[a];
-      const tl = Math.hypot(tx, ty, tz) || 1;
+      const tl = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1;
       tx /= tl; ty /= tl; tz /= tl;
-      const x = th.x[i], z = th.z[i];
-      let y = th.y[i], r = th.nodeRadius(i);
-      const ex = eye[0] - x, ey = eye[1] - y, ez = eye[2] - z;
-      const dist = Math.hypot(ex, ey, ez);
+      const x = th.x[i], y = th.y[i], z = th.z[i], r = th.rad[i];
+      const ex = e0 - x, ey = e1 - y, ez = e2 - z;
+      const dist = Math.sqrt(ex * ex + ey * ey + ez * ez);
       let sx = ty * ez - tz * ey, sy = tz * ex - tx * ez, sz = tx * ey - ty * ex;
-      const sl = Math.hypot(sx, sy, sz) || 1;
+      const sl = Math.sqrt(sx * sx + sy * sy + sz * sz) || 1;
       sx /= sl; sy /= sl; sz /= sl;
-      const rd = Math.max(r, 0.75 * dist * v.pxScale);
+      const rd = Math.max(r, 0.75 * dist * pxs);
       // A free end gets a rounded tip: one extra, narrower pair just past it.
       const freeEnd = th.kind[i] === FREE;
       if (!prevOk && freeEnd) {
-        put(x - tx * r * 0.8, y - ty * r * 0.8, z - tz * r * 0.8, sx, sy, sz, r * 0.45, Math.max(r * 0.45, rd * 0.5));
+        this.rPut(x - tx * r * 0.8, y - ty * r * 0.8, z - tz * r * 0.8, sx, sy, sz, r * 0.45, Math.max(r * 0.45, rd * 0.5));
         seg = 1;
       }
-      put(x, y, z, sx, sy, sz, r, rd);
-      if (prevOk || seg) link();
+      {
+        // The node's pair, written in place (a call with eight doubles would box them all).
+        const d = this.ribbon.data, cover = r < rd ? r / rd : 1;
+        let o = this.rv * 9;
+        d[o] = x - sx * rd; d[o + 1] = y - sy * rd; d[o + 2] = z - sz * rd;
+        d[o + 3] = sx; d[o + 4] = sy; d[o + 5] = sz;
+        d[o + 6] = -1; d[o + 7] = r; d[o + 8] = cover;
+        o += 9;
+        d[o] = x + sx * rd; d[o + 1] = y + sy * rd; d[o + 2] = z + sz * rd;
+        d[o + 3] = sx; d[o + 4] = sy; d[o + 5] = sz;
+        d[o + 6] = 1; d[o + 7] = r; d[o + 8] = cover;
+        this.rv += 2;
+      }
+      if (prevOk || seg) this.rLink();
       seg = 0;
       if (!nextOk && freeEnd) {
-        put(x + tx * r * 0.8, y + ty * r * 0.8, z + tz * r * 0.8, sx, sy, sz, r * 0.45, Math.max(r * 0.45, rd * 0.5));
-        link();
+        this.rPut(x + tx * r * 0.8, y + ty * r * 0.8, z + tz * r * 0.8, sx, sy, sz, r * 0.45, Math.max(r * 0.45, rd * 0.5));
+        this.rLink();
       }
     }
     // The echo: recently merged rope, sinking into the film and fading over ECHO seconds.
-    const e = this.echoBuf, [ox, oz] = this.offset, now = th.time;
+    const e = this.echoBuf, ox = this.offset[0], oz = this.offset[1], now = th.time;
     const first = Math.max(0, this.echoN - 1024);
     let px = NaN, pz = NaN;
     for (let q = first; q < this.echoN; q++) {
@@ -618,24 +676,39 @@ class Honey implements ToyInstance {
       const r = a * (1 - 0.45 * sink), yc = e[k + 4] + a * 0.8 * (1 - sink) - a * 0.3 * sink;
       const x0 = e[k] + ox, z0 = e[k + 1] + oz, x1 = e[k + 2] + ox, z1 = e[k + 3] + oz;
       let tx = x1 - x0, tz = z1 - z0;
-      const tl = Math.hypot(tx, tz) || 1;
+      const tl = Math.sqrt(tx * tx + tz * tz) || 1;
       tx /= tl; tz /= tl;
-      const cont = Math.abs(x0 - px) < 1e-9 && Math.abs(z0 - pz) < 1e-9;
-      for (const [x, z, first2] of [[x0, z0, 1], [x1, z1, 0]] as [number, number, number][]) {
-        if (first2 && cont) continue;
-        const ex = eye[0] - x, ey = eye[1] - yc, ez = eye[2] - z;
-        const dist = Math.hypot(ex, ey, ez);
+      const rr = r * (1 - sink * 0.5);
+      // Continue the strip if this edge starts where the last one ended. (Pairs written in place.)
+      const d = this.ribbon.data;
+      for (let end = Math.abs(x0 - px) < 1e-9 && Math.abs(z0 - pz) < 1e-9 ? 1 : 0; end < 2; end++) {
+        const x = end ? x1 : x0, z = end ? z1 : z0;
+        const ex = e0 - x, ey = e1 - yc, ez = e2 - z;
+        const dist = Math.sqrt(ex * ex + ey * ey + ez * ez);
         let sx = -tz * ey, sy = tz * ex - tx * ez, sz = tx * ey;
-        const sl = Math.hypot(sx, sy, sz) || 1;
+        const sl = Math.sqrt(sx * sx + sy * sy + sz * sz) || 1;
         sx /= sl; sy /= sl; sz /= sl;
-        const rd = Math.max(r, 0.75 * dist * v.pxScale);
-        put(x, yc, z, sx, sy, sz, r * (1 - sink * 0.5), rd);
-        if (!first2 || cont) link();
+        const rd = Math.max(r, 0.75 * dist * pxs), cover = rr < rd ? rr / rd : 1;
+        let o = this.rv * 9;
+        d[o] = x - sx * rd; d[o + 1] = yc - sy * rd; d[o + 2] = z - sz * rd;
+        d[o + 3] = sx; d[o + 4] = sy; d[o + 5] = sz;
+        d[o + 6] = -1; d[o + 7] = rr; d[o + 8] = cover;
+        o += 9;
+        d[o] = x + sx * rd; d[o + 1] = yc + sy * rd; d[o + 2] = z + sz * rd;
+        d[o + 3] = sx; d[o + 4] = sy; d[o + 5] = sz;
+        d[o + 6] = 1; d[o + 7] = rr; d[o + 8] = cover;
+        this.rv += 2;
       }
+      this.rLink();
       px = x1;
       pz = z1;
     }
-    return { data: d, index: idx, floats: vtx * F, count: ic };
+    const rb = this.threadOut;
+    rb.data = this.ribbon.data;
+    rb.index = this.ribbon.index;
+    rb.floats = this.rv * 9;
+    rb.count = this.ri;
+    return rb;
   }
 
   /** The thread's shadow on the surface: an amber-tinted line with a bright focus down its middle. */
@@ -649,32 +722,46 @@ class Honey implements ToyInstance {
     }
     const d = this.shadowBuf.data, idx = this.shadowBuf.index;
     let vtx = 0, ic = 0, prev = -1;
-    const px = new Float64Array(3);
+    const px = this.shadowPt, pool = this.pool, ox = this.offset[0], oz = this.offset[1];
+    const half = pool.half, pdx = pool.dx, PN = pool.N, pb = pool.b, ph = pool.h;
+    const L0 = L[0], L1 = L[1], L2 = L[2], ab0 = liq.absorb[0], ab1 = liq.absorb[1], ab2 = liq.absorb[2], cloud = liq.cloud;
     for (let i = 0; i < n; i++) {
       if (th.kind[i] === STUCK || (i > 0 && th.cut[i - 1] && (i === n - 1 || th.cut[i]))) {
         prev = -1;
         continue;
       }
       // March the point down the light direction onto the surface (two refinements).
-      let sy = this.host.surface(th.x[i], th.z[i]);
-      for (let it = 0; it < 2; it++) {
-        const k = (th.y[i] - sy) / L[1];
-        px[0] = th.x[i] - L[0] * k;
-        px[2] = th.z[i] - L[2] * k;
-        sy = this.host.surface(px[0], px[2]);
+      // March down the light onto the surface: sample under the node, then twice more along the ray.
+      // (Bilinear lookup written in place: a call per sample would box its doubles.)
+      let sy = 0;
+      px[0] = th.x[i];
+      px[2] = th.z[i];
+      for (let it = 0; it < 3; it++) {
+        if (it > 0) {
+          const k = (th.y[i] - sy) / L1;
+          px[0] = th.x[i] - L0 * k;
+          px[2] = th.z[i] - L2 * k;
+        }
+        const fx = (px[0] - ox + half) / pdx - 0.5, fz = (px[2] - oz + half) / pdx - 0.5;
+        if (fx < 0 || fz < 0 || fx >= PN - 1 || fz >= PN - 1) sy = -pool.thickness;
+        else {
+          const ci = fx | 0, cj = fz | 0, u = fx - ci, w = fz - cj, q = cj * PN + ci;
+          const a = pb[q] + ph[q], b = pb[q + 1] + ph[q + 1], c = pb[q + PN] + ph[q + PN], d2 = pb[q + PN + 1] + ph[q + PN + 1];
+          sy = (a * (1 - u) + b * u) * (1 - w) + (c * (1 - u) + d2 * u) * w;
+        }
       }
       const hgt = Math.max(0, th.y[i] - sy);
       px[1] = sy + 0.0002;
-      const r = th.nodeRadius(i);
+      const r = th.rad[i];
       const blur = 0.035 * hgt;
       const hw = r * 1.1 + blur;
-      const k = Math.min(0.5, (0.5 * r) / hw) * (0.55 + 0.45 * liq.cloud);
-      const T0 = Math.exp(-liq.absorb[0] * 2000 * r), T1 = Math.exp(-liq.absorb[1] * 2000 * r), T2 = Math.exp(-liq.absorb[2] * 2000 * r);
-      const focus = 0.9 * (1 - liq.cloud) * Math.min(1, (r / hw) * 1.4);
+      const k = Math.min(0.5, (0.5 * r) / hw) * (0.55 + 0.45 * cloud);
+      const T0 = Math.exp(-ab0 * 2000 * r), T1 = Math.exp(-ab1 * 2000 * r), T2 = Math.exp(-ab2 * 2000 * r);
+      const focus = 0.9 * (1 - cloud) * Math.min(1, (r / hw) * 1.4);
       // Across direction: perpendicular to the shadow's own direction on the ground.
       const j = i < n - 1 && !th.cut[i] ? i + 1 : i - 1;
       let gx = th.x[j] - th.x[i], gz = th.z[j] - th.z[i];
-      const gl = Math.hypot(gx, gz);
+      const gl = Math.sqrt(gx * gx + gz * gz);
       if (gl < 1e-7) {
         gx = 1;
         gz = 0;
@@ -685,9 +772,10 @@ class Honey implements ToyInstance {
       const cx = -gz, cz = gx;
       for (let q = 0; q < 5; q++) {
         const o = vtx * F;
-        d[o] = px[0] + cx * hw * ACROSS[q];
+        const ac = q === 0 ? -1 : q === 1 ? -0.45 : q === 2 ? 0 : q === 3 ? 0.45 : 1;
+        d[o] = px[0] + cx * hw * ac;
         d[o + 1] = px[1];
-        d[o + 2] = px[2] + cz * hw * ACROSS[q];
+        d[o + 2] = px[2] + cz * hw * ac;
         const edge = q === 0 || q === 4;
         const mid = q === 2;
         const f = mid ? 1 + focus : 0.35;
@@ -705,7 +793,12 @@ class Honey implements ToyInstance {
       prev = vtx - 5;
       if (i < n - 1 && th.cut[i]) prev = -1;
     }
-    return { data: d, index: idx, floats: vtx * F, count: ic };
+    const rb = this.shadowOut;
+    rb.data = d;
+    rb.index = idx;
+    rb.floats = vtx * F;
+    rb.count = ic;
+    return rb;
   }
 
   /** Soft shadow of the dipper's head on the surface. */
@@ -722,7 +815,7 @@ class Honey implements ToyInstance {
     }
     const hgt = Math.max(0.001, c[1] - sy);
     const blur = 0.3 * hgt;
-    const ux = p.ax[0], uz = p.ax[2], ul = Math.hypot(ux, uz) || 1;
+    const ux = p.ax[0], uz = p.ax[2], ul = Math.sqrt(ux * ux + uz * uz) || 1;
     const a1 = HEAD_LEN * 0.55 + blur, a2 = HEAD_R + blur;
     const strength = 0.5 * Math.min(1, (HEAD_R * 2.2) / (HEAD_R + blur));
     const d = this.blobData;
@@ -736,7 +829,12 @@ class Honey implements ToyInstance {
       d[o + 5] = strength;
       d[o + 6] = 0;
     });
-    return { data: d, index: BLOB_INDEX, floats: 28, count: 6 };
+    const rb = this.blobOut;
+    rb.data = d;
+    rb.index = BLOB_INDEX;
+    rb.floats = 28;
+    rb.count = 6;
+    return rb;
   }
 
   private sound(moving: number) {
@@ -785,7 +883,8 @@ class Honey implements ToyInstance {
       a1mm: +(c.a1 * 1000).toFixed(3),
       pool: { volume_mL: +(this.pool.volume * 1e6).toFixed(3), peakMm: +(this.pool.peak * 1000).toFixed(2) },
       offset: this.offset.map((x) => +(x * 100).toFixed(2)),
-      perf: { simMs: +this.perf.sim.toFixed(2), poolMs: +this.perf.pool.toFixed(2), drawMs: +this.perf.draw.toFixed(2) },
+      perf: { simMs: +this.perf.sim.toFixed(2), poolMs: +this.perf.pool.toFixed(2), drawMs: +this.perf.draw.toFixed(2), stepMs: +this.stepEma.toFixed(2) },
+      governor: { maxSub: th.maxSub, quality: this.view.quality },
       simTime: +this.simT.toFixed(2),
     };
   }
@@ -812,22 +911,35 @@ class Honey implements ToyInstance {
   }
 }
 
+function normInPlace(v: Vec3) {
+  const l = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) || 1;
+  v[0] /= l;
+  v[1] /= l;
+  v[2] /= l;
+}
+
 function wrapAngle(a: number) {
   while (a > Math.PI) a -= 2 * Math.PI;
   while (a < -Math.PI) a += 2 * Math.PI;
   return a;
 }
 
-/** Ray hit on the vertical plane z = z0 (facing the camera). */
-function hitZ(r: { o: Vec3; d: Vec3 }, z0: number): Vec3 {
+/** Ray hit on the vertical plane z = z0 (facing the camera), into `out`. */
+function hitZ(r: { o: Vec3; d: Vec3 }, z0: number, out: Vec3): Vec3 {
   const t = Math.abs(r.d[2]) > 1e-6 ? (z0 - r.o[2]) / r.d[2] : 0;
-  return [r.o[0] + r.d[0] * t, r.o[1] + r.d[1] * t, z0];
+  out[0] = r.o[0] + r.d[0] * t;
+  out[1] = r.o[1] + r.d[1] * t;
+  out[2] = z0;
+  return out;
 }
 
-/** Ray hit on the horizontal plane y = y0. */
-function hitY(r: { o: Vec3; d: Vec3 }, y0: number): Vec3 {
+/** Ray hit on the horizontal plane y = y0, into `out`. */
+function hitY(r: { o: Vec3; d: Vec3 }, y0: number, out: Vec3): Vec3 {
   const t = Math.abs(r.d[1]) > 1e-6 ? (y0 - r.o[1]) / r.d[1] : 0;
-  return [r.o[0] + r.d[0] * t, y0, r.o[2] + r.d[2] * t];
+  out[0] = r.o[0] + r.d[0] * t;
+  out[1] = y0;
+  out[2] = r.o[2] + r.d[2] * t;
+  return out;
 }
 
 const STYLE = `
@@ -843,4 +955,5 @@ const STYLE = `
 .hon-dip { position: relative; overflow: hidden; padding: 10px 16px; background: rgba(150, 92, 22, 0.9); }
 .hon-load { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #ffd27a; transform-origin: left; }
 .hon-chip:active, .hon-dip:active { transform: scale(.96); }
+@media (max-width: 400px) { .hon-chip { padding: 9px 9px; gap: 0; } .hon-chip::before { display: none; } .hon-chips { gap: 4px; } }
 `;

@@ -46,6 +46,8 @@ export class Thread {
   readonly cut: Uint8Array;
   /** Set on a free node that came loose in a snap until it lands (for the drip sound). */
   readonly drip: Uint8Array;
+  /** Node radii, refreshed by radii(). */
+  readonly rad: Float64Array;
   /** Sim time each node landed. */
   readonly tland: Float64Array;
   /** Material spin rate about the axis at each vertex (rad/s): the twist degree of freedom. */
@@ -72,9 +74,11 @@ export class Thread {
   iters = 1;
   /** Substeps: no node moves more than cfl × ds per substep, up to maxSub. */
   cfl = 0.5;
-  maxSub = 32;
+  maxSub = 36;
   /** Spacing grows to this multiple of ds high above the landing point, where the thread is straight. */
   coarse = 2.5;
+  /** Heights above the surface (m) over which spacing goes from ds to coarse × ds. */
+  fine: [number, number] = [0.004, 0.02];
   /** Upper bound on the surface height anywhere (set by the host each frame): contact tests skip nodes above it. */
   ceiling = 0.02;
   /** Last frame's substep count and fastest node (for the HUD). */
@@ -120,6 +124,7 @@ export class Thread {
     this.kind = new Uint8Array(cap);
     this.cut = new Uint8Array(cap);
     this.drip = new Uint8Array(cap);
+    this.rad = new Float64Array(cap);
     this.tland = f();
     this.spin = f();
     this.tw = new Float64Array(8 * cap);
@@ -153,6 +158,30 @@ export class Thread {
       k++;
     }
     return k ? Math.sqrt(A / k) : this.drip[i] || this.kind[i] === NOZZLE ? this.a0 * 0.5 : 0.1e-3;
+  }
+
+  /** Radius at every node, from its edges' volumes (fills `rad`; allocation-free, for drawing). */
+  radii() {
+    const { x, y, z, vol, cut, rad, n } = this;
+    const lmin = 0.1 * this.ds;
+    let prevA = -1;
+    for (let i = 0; i < n; i++) {
+      let A = 0, k = 0;
+      if (prevA >= 0) {
+        A += prevA;
+        k++;
+      }
+      let nextA = -1;
+      if (i < n - 1 && !cut[i]) {
+        const dx = x[i + 1] - x[i], dy = y[i + 1] - y[i], dz = z[i + 1] - z[i];
+        const l = Math.max(lmin, Math.sqrt(dx * dx + dy * dy + dz * dz));
+        nextA = vol[i] / (Math.PI * l);
+        A += nextA;
+        k++;
+      }
+      rad[i] = k ? Math.sqrt(A / k) : this.drip[i] || this.kind[i] === NOZZLE ? this.a0 * 0.5 : 0.1e-3;
+      prevA = nextA;
+    }
   }
 
   /** Slide everything already landed (the toast moved under it). */
@@ -647,45 +676,57 @@ export class Thread {
   /** Split long free edges (Catmull-Rom midpoint) and merge squashed ones, keeping ~ds spacing. */
   private resample(host: ThreadHost) {
     const n = this.n;
-    const { x, y, z, vx, vy, vz, kind, ext, vol, cut, drip, tmp } = this;
+    const { x, y, z, vx, vy, vz, kind, ext, vol, cut, drip, tmp, tland, spin } = this;
     // Fine spacing near the landing point (the coil), coarser up the straight falling part.
     const base = this.ds * (n > this.cap * 0.8 ? 2 : 1), extra = this.coarse - 1;
-    const target = (i: number) => base * (1 + extra * smooth(0.004, 0.02, y[i] - host.surface(x[i], z[i])));
-    // Pack into scratch rows: 12 values per node.
+    const f0 = this.fine[0], f1 = this.fine[1];
+    // Pack into scratch rows (13 values per node), written in place.
     const S = 13;
     const out = tmp;
     let m = 0;
-    const put = (X: number, Y: number, Z: number, VX: number, VY: number, VZ: number, K: number, EX: number, VOL: number, CUT: number, DR: number, TL: number, LD: number) => {
-      const o = m * S;
-      out[o] = X; out[o + 1] = Y; out[o + 2] = Z;
-      out[o + 3] = VX; out[o + 4] = VY; out[o + 5] = VZ;
-      out[o + 6] = K; out[o + 7] = EX; out[o + 8] = VOL; out[o + 9] = CUT; out[o + 10] = DR;
-      out[o + 11] = TL; out[o + 12] = LD;
-      m++;
-    };
     let changed = false;
     for (let i = 0; i < n; i++) {
       const last = i === n - 1;
-      const le = last ? 0 : len3(x[i + 1] - x[i], y[i + 1] - y[i], z[i + 1] - z[i]);
+      let le = 0;
+      if (!last) {
+        const dx = x[i + 1] - x[i], dy = y[i + 1] - y[i], dz = z[i + 1] - z[i];
+        le = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      }
+      // Target spacing here.
+      let tgt = base;
+      if (extra > 0 && (kind[i] === FREE || (!last && kind[i + 1] === FREE))) {
+        const hgt = y[i] - host.surface(x[i], z[i]);
+        const u = hgt <= f0 ? 0 : hgt >= f1 ? 1 : (hgt - f0) / (f1 - f0);
+        tgt = base * (1 + extra * u * u * (3 - 2 * u));
+      }
       // Merge: drop a free interior node whose two edges are both short.
-      if (i > 0 && !last && kind[i] === FREE && !cut[i - 1] && !cut[i] && m > 0) {
-        const lp = len3(x[i] - x[i - 1], y[i] - y[i - 1], z[i] - z[i - 1]);
-        if (lp + le < 0.8 * target(i) && !drip[i]) {
+      if (i > 0 && !last && kind[i] === FREE && !cut[i - 1] && !cut[i] && m > 0 && !drip[i]) {
+        const dx = x[i] - x[i - 1], dy = y[i] - y[i - 1], dz = z[i] - z[i - 1];
+        const lp = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (lp + le < 0.8 * tgt) {
           out[(m - 1) * S + 8] += vol[i];
           changed = true;
           continue;
         }
       }
-      put(x[i], y[i], z[i], vx[i], vy[i], vz[i], kind[i], ext[i], vol[i], cut[i], drip[i], this.tland[i], this.spin[i]);
-      if (!last && !cut[i] && le > 1.5 * target(i) && (kind[i] === FREE || kind[i + 1] === FREE) && m < this.cap - 2) {
+      let o = m * S;
+      out[o] = x[i]; out[o + 1] = y[i]; out[o + 2] = z[i];
+      out[o + 3] = vx[i]; out[o + 4] = vy[i]; out[o + 5] = vz[i];
+      out[o + 6] = kind[i]; out[o + 7] = ext[i]; out[o + 8] = vol[i]; out[o + 9] = cut[i]; out[o + 10] = drip[i];
+      out[o + 11] = tland[i]; out[o + 12] = spin[i];
+      m++;
+      if (!last && !cut[i] && le > 1.5 * tgt && (kind[i] === FREE || kind[i + 1] === FREE) && m < this.cap - 2) {
         // Catmull-Rom midpoint through the neighbours, so splitting doesn't add kinks.
         const a = i > 0 && !cut[i - 1] ? i - 1 : i, d = i + 2 < n && !cut[i + 1] ? i + 2 : i + 1;
-        const mx = (9 * (x[i] + x[i + 1]) - x[a] - x[d]) / 16;
-        const my = (9 * (y[i] + y[i + 1]) - y[a] - y[d]) / 16;
-        const mz = (9 * (z[i] + z[i + 1]) - z[a] - z[d]) / 16;
-        const o = (m - 1) * S;
         out[o + 8] = vol[i] / 2;
-        put(mx, my, mz, (vx[i] + vx[i + 1]) / 2, (vy[i] + vy[i + 1]) / 2, (vz[i] + vz[i + 1]) / 2, FREE, 0, vol[i] / 2, 0, 0, 0, (this.spin[i] + this.spin[i + 1]) / 2);
+        o = m * S;
+        out[o] = (9 * (x[i] + x[i + 1]) - x[a] - x[d]) / 16;
+        out[o + 1] = (9 * (y[i] + y[i + 1]) - y[a] - y[d]) / 16;
+        out[o + 2] = (9 * (z[i] + z[i + 1]) - z[a] - z[d]) / 16;
+        out[o + 3] = (vx[i] + vx[i + 1]) / 2; out[o + 4] = (vy[i] + vy[i + 1]) / 2; out[o + 5] = (vz[i] + vz[i + 1]) / 2;
+        out[o + 6] = FREE; out[o + 7] = 0; out[o + 8] = vol[i] / 2; out[o + 9] = 0; out[o + 10] = 0;
+        out[o + 11] = 0; out[o + 12] = (spin[i] + spin[i + 1]) / 2;
+        m++;
         changed = true;
       }
     }
@@ -696,7 +737,7 @@ export class Thread {
       x[j] = out[o]; y[j] = out[o + 1]; z[j] = out[o + 2];
       vx[j] = out[o + 3]; vy[j] = out[o + 4]; vz[j] = out[o + 5];
       kind[j] = out[o + 6]; ext[j] = out[o + 7]; vol[j] = out[o + 8]; cut[j] = out[o + 9]; drip[j] = out[o + 10];
-      this.tland[j] = out[o + 11]; this.spin[j] = out[o + 12];
+      tland[j] = out[o + 11]; spin[j] = out[o + 12];
     }
     this.n = M;
     if (M > 0) this.vol[M - 1] = 0;
@@ -730,8 +771,9 @@ export class Thread {
 
   private removeFront(k: number) {
     const n = this.n;
-    for (const a of [this.x, this.y, this.z, this.vx, this.vy, this.vz, this.ext, this.vol, this.tland, this.spin]) a.copyWithin(0, k, n);
-    for (const a of [this.kind, this.cut, this.drip]) a.copyWithin(0, k, n);
+    const f = this.floatArrays, b = this.byteArrays;
+    for (let q = 0; q < f.length; q++) f[q].copyWithin(0, k, n);
+    for (let q = 0; q < b.length; q++) b[q].copyWithin(0, k, n);
     this.n = n - k;
   }
 
@@ -745,8 +787,26 @@ export class Thread {
       a += this.nodeRadius(i);
       k++;
     }
-    return k ? { U1: sp / k, a1: a / k, i: first } : { U1: 0, a1: 0, i: first };
+    const c = this.contactOut;
+    c.U1 = k ? sp / k : 0;
+    c.a1 = k ? a / k : 0;
+    c.i = first;
+    return c;
   }
+
+  private get floatArrays() {
+    return (this._fa ??= [this.x, this.y, this.z, this.vx, this.vy, this.vz, this.ext, this.vol, this.tland, this.spin]);
+  }
+
+  private get byteArrays() {
+    return (this._ba ??= [this.kind, this.cut, this.drip]);
+  }
+
+  private _fa: Float64Array[] | null = null;
+  private _ba: Uint8Array[] | null = null;
+
+  /** Reused result of contact(). */
+  private contactOut = { U1: 0, a1: 0, i: 0 };
 }
 
 function len3(a: number, b: number, c: number) {

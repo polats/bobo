@@ -174,16 +174,9 @@ export class Pool {
 
   /** Extend the honey extent and the upload rect (and the mobile box, for fresh deposits). */
   private grow(i0: number, j0: number, i1: number, j1: number, mobile = true) {
-    const boxes = mobile ? [this.box, this.dirty, this.mbox] : [this.dirty];
-    if (!mobile) boxes.push(this.box);
-    for (const b of boxes) {
-      if (b[2] < b[0]) {
-        b[0] = i0; b[1] = j0; b[2] = i1; b[3] = j1;
-      } else {
-        b[0] = Math.min(b[0], i0); b[1] = Math.min(b[1], j0);
-        b[2] = Math.max(b[2], i1); b[3] = Math.max(b[3], j1);
-      }
-    }
+    extend(this.box, i0, j0, i1, j1);
+    extend(this.dirty, i0, j0, i1, j1);
+    if (mobile) extend(this.mbox, i0, j0, i1, j1);
   }
 
   /**
@@ -216,7 +209,8 @@ export class Pool {
           }
         }
       this.peak = hmax;
-      this.mbox = a1 >= 0 ? [a0, b0, a1, b1] : [1, 1, 0, 0];
+      if (a1 >= 0) set4(this.mbox, a0, b0, a1, b1);
+      else set4(this.mbox, 1, 1, 0, 0);
       this.grow(i0, j0, i1, j1, false);
     } else this.peak = 0;
     this.acc += dt;
@@ -247,7 +241,8 @@ export class Pool {
         if (j > nj1) nj1 = j;
       }
     this.volume = vol * this.dx * this.dx;
-    this.box = ni1 >= 0 ? [ni0, nj0, ni1, nj1] : [1, 1, 0, 0];
+    if (ni1 >= 0) set4(this.box, ni0, nj0, ni1, nj1);
+    else set4(this.box, 1, 1, 0, 0);
     if (soaked) this.grow(i0, j0, i1, j1, false);
   }
 
@@ -289,6 +284,21 @@ export class Pool {
       next = (rh[q] + c[q] * next) / dg[q];
       h[k0 + q * st] = next > 0 ? next : 0;
     }
+  }
+}
+
+export function set4(b: number[], a: number, c: number, d: number, e: number) {
+  b[0] = a; b[1] = c; b[2] = d; b[3] = e;
+}
+
+function extend(b: number[], i0: number, j0: number, i1: number, j1: number) {
+  if (b[2] < b[0]) {
+    b[0] = i0; b[1] = j0; b[2] = i1; b[3] = j1;
+  } else {
+    if (i0 < b[0]) b[0] = i0;
+    if (j0 < b[1]) b[1] = j0;
+    if (i1 > b[2]) b[2] = i1;
+    if (j1 > b[3]) b[3] = j1;
   }
 }
 
