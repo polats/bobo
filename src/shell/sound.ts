@@ -654,3 +654,6 @@ const VOICES: Record<Voice, Synth> = {
     return 1.2;
   },
 };
+
+// Exposed for on-device debugging over the WebView inspector.
+(window as unknown as Record<string, unknown>).boboOutputNow = outputNow;
