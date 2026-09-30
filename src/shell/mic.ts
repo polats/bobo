@@ -5,9 +5,10 @@
 // unvoiced: breath is turbulent noise) and `pitch` (only when the sound is clearly a note).
 // Nothing is recorded or stored; listening stops when the toy closes or the app is backgrounded.
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import { outputNow } from './sound';
 
 interface BoboMicPlugin {
-  start(): Promise<{ granted: boolean }>;
+  start(o: { echoCancel: boolean }): Promise<{ granted: boolean }>;
   stop(): Promise<void>;
   addListener(event: 'frame', fn: (f: Frame) => void): Promise<PluginListenerHandle>;
 }
@@ -27,8 +28,12 @@ export interface Mic {
   readonly blow: number;
   /** The sung or hummed note in Hz, or 0 when there isn't a clear one. */
   readonly pitch: number;
-  /** Ask for permission (first time only) and start listening. Resolves false if refused. */
-  start(): Promise<boolean>;
+  /**
+   * Ask for permission (first time only) and start listening. Resolves false if refused.
+   * echoCancel turns on the platform's echo canceller, for toys that listen for singing over their
+   * own tone; leave it off for blowing, where its processing flattens breath.
+   */
+  start(opts?: { echoCancel?: boolean }): Promise<boolean>;
   stop(): void;
 }
 
@@ -42,18 +47,21 @@ class MicInput implements Mic {
   private floorDb = -60;
   private calib = 0;
   private frames = 0;
+  /** How much of the speaker's output leaks back into the mic (RMS ratio), learned while listening. */
+  private leak = 1;
   private handle: PluginListenerHandle | null = null;
   private stream: MediaStream | null = null;
   private raf = 0;
   private audio: AudioContext | null = null;
 
-  async start() {
+  async start(opts: { echoCancel?: boolean } = {}) {
     if (this.active) return true;
     this.calib = 0;
+    this.leak = 1;
     try {
       if (native) {
         this.handle = await native.addListener('frame', (f) => this.take(f));
-        const r = await native.start();
+        const r = await native.start({ echoCancel: !!opts.echoCancel });
         if (!r.granted) {
           await this.handle.remove();
           this.handle = null;
@@ -62,7 +70,7 @@ class MicInput implements Mic {
       } else {
         if (!navigator.mediaDevices?.getUserMedia) return false;
         // Raw input: echo cancellation and auto gain would flatten a blow into nothing.
-        this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: !!opts.echoCancel, noiseSuppression: false, autoGainControl: false } });
         const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         this.audio = new AC();
         const an = this.audio.createAnalyser();
@@ -106,9 +114,26 @@ class MicInput implements Mic {
 
   private take(f: Frame) {
     this.last = f;
-    if (++this.frames === 40) console.log(`[bobo] mic: ${Math.round(20 * Math.log10(f.rms + 1e-12))} dB, clarity ${f.clarity.toFixed(2)}`);
+    // Echo suppression. The toys' own sound comes back through the mic; left alone, a plate or a
+    // glass hears itself and keeps itself ringing. The speaker's output is known (the shell meters
+    // it), so learn how much leaks back (the smallest mic/speaker ratio lately: moments when only
+    // the echo is there), subtract that predicted echo, and ignore a pitch that is just the toy's
+    // own loudest tone unless the voice clearly rises above the echo.
+    const out = outputNow();
+    if (out.rms > 1e-3) {
+      const r = f.rms / out.rms;
+      this.leak = r < this.leak ? r : Math.min(1, this.leak * 1.004);
+    }
+    const echo = this.leak * out.rms;
+    const voiced = Math.sqrt(Math.max(0, f.rms * f.rms - 1.6 * echo * echo));
+    if (f.pitch > 0 && out.peakHz > 0 && out.peakShare > 0.2 && voiced < 0.7 * f.rms) {
+      const ratio = f.pitch / out.peakHz;
+      const octave = Math.round(Math.log2(ratio));
+      if (Math.abs(Math.log2(ratio) - octave) < 0.05 && Math.abs(octave) <= 1) f = { ...f, pitch: 0, clarity: Math.min(f.clarity, 0.5) };
+    }
+    if (++this.frames === 40) console.log(`[bobo] mic: ${Math.round(20 * Math.log10(f.rms + 1e-12))} dB, clarity ${f.clarity.toFixed(2)}, echo leak ${this.leak.toFixed(3)}`);
     // Near-digital silence (the first buffers, a muted input; no real mic sits below about -85 dB)
-    // says nothing about the room: skip it.
+    // says nothing about the room: skip it. The room's floor follows the raw input.
     const db = 20 * Math.log10(f.rms + 1e-12);
     if (db < -85) return;
     // The first ~half second measures the room; after that the noise floor follows the quietest
@@ -121,12 +146,15 @@ class MicInput implements Mic {
     // fast. Well above it is a blow or a held note: barely move, so neither fades into the floor.
     const above = db - this.floorDb;
     this.floorDb = Math.max(-90, above < 0 ? db : this.floorDb + (above < 14 ? 0.35 : 0.004));
-    const level = Math.max(0, Math.min(1, (db - this.floorDb - 6) / 30));
+    // What the player adds, after the predicted echo is taken out.
+    const vdb = 20 * Math.log10(voiced + 1e-12);
+    const level = Math.max(0, Math.min(1, (vdb - this.floorDb - 6) / 30));
     this.level += (level - this.level) * 0.5;
     // Breath is noise: loud with little periodicity. A held note is loud but clearly periodic.
     const breath = level * Math.max(0, Math.min(1, (0.75 - f.clarity) / 0.4));
     this.blow = breath > this.blow ? this.blow + (breath - this.blow) * 0.6 : this.blow * 0.82;
     this.pitch = f.clarity > 0.85 && level > 0.15 ? f.pitch : 0;
+    if (this.frames % 80 === 0) console.log(`[bobo] mic: level ${this.level.toFixed(2)} blow ${this.blow.toFixed(2)} pitch ${Math.round(this.pitch)} · speaker ${Math.round(out.peakHz)} Hz · leak ${this.leak.toFixed(3)}`);
   }
 }
 

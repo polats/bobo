@@ -1,10 +1,13 @@
 // Streams the rim simulation's own samples to the speakers. The shell's voices are event-driven
 // (rings, slip pulse trains), but a singing glass is one continuous waveform whose every cycle
-// comes out of the friction solve, so the toy owns a small AudioContext with a ring-buffer
+// comes out of the friction solve, so the toy streams it through a ring-buffer
 // worklet. The main thread integrates the sim for the wall-clock time each frame covers and
 // posts the block; the worklet resamples it to the device rate and nudges its read speed by at
 // most ±0.4% to hold ~60 ms of buffer, so frame jitter never clicks.
-import { onSoundChange, soundEnabled } from '../../shell/sound';
+import { audioOutput, unlockSound } from '../../shell/sound';
+
+/** The worklet can only be registered once per context; later visits reuse it. */
+const loaded = new WeakMap<AudioContext, Promise<void>>();
 
 const WORKLET = /* js */ `
 class GlassStream extends AudioWorkletProcessor {
@@ -63,40 +66,34 @@ export class GlassAudio {
   private ctx: AudioContext | null = null;
   private node: AudioWorkletNode | null = null;
   private out: GainNode | null = null;
-  private offSound: () => void;
-  private readonly unlock = () => this.ctx?.resume().catch(() => {});
+  private readonly unlock = () => unlockSound();
 
   constructor(private src: number, private el: HTMLElement) {
-    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    this.offSound = onSoundChange((on) => this.setOn(on));
-    if (!AC) return;
-    try {
-      this.ctx = new AC({ latencyHint: 'interactive' });
-    } catch {
-      return;
+    // The shell's shared output: mute, compressor and the mic's echo suppression all see the glass.
+    const shared = audioOutput();
+    if (!shared || !shared.ctx.audioWorklet) return;
+    const c = (this.ctx = shared.ctx);
+    this.out = shared.bus;
+    this.out.gain.value = 0.9;
+    let ready = loaded.get(c);
+    if (!ready) {
+      const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
+      ready = c.audioWorklet.addModule(url).finally(() => URL.revokeObjectURL(url));
+      loaded.set(c, ready);
     }
-    const c = this.ctx;
-    if (!c.audioWorklet) return;
-    this.out = c.createGain();
-    this.out.gain.value = soundEnabled() ? 0.9 : 0;
-    this.out.connect(c.destination);
-    const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
-    c.audioWorklet
-      .addModule(url)
+    ready
       .then(() => {
-        if (!this.ctx) return;
+        if (!this.ctx || !this.out) return;
         this.node = new AudioWorkletNode(c, 'glass-stream', {
           numberOfInputs: 0,
           outputChannelCount: [2],
           processorOptions: { src, target: Math.round(src * 0.06) },
         });
-        this.node.connect(this.out!);
+        this.node.connect(this.out);
       })
-      .catch((e) => console.log(`[bobo] glass audio unavailable: ${e instanceof Error ? e.message : e}`))
-      .finally(() => URL.revokeObjectURL(url));
+      .catch((e) => console.log(`[bobo] glass audio unavailable: ${e instanceof Error ? e.message : e}`));
     // Browsers only start audio from a gesture.
     el.addEventListener('pointerdown', this.unlock);
-    c.resume().catch(() => {});
   }
 
   /** True when blocks sent now will be heard. */
@@ -111,16 +108,13 @@ export class GlassAudio {
     this.node!.port.postMessage([l, r], [l.buffer, r.buffer]);
   }
 
-  private setOn(on: boolean) {
-    if (this.out && this.ctx) this.out.gain.setTargetAtTime(on ? 0.9 : 0, this.ctx.currentTime, 0.02);
-  }
-
   destroy() {
-    this.offSound();
     this.el.removeEventListener('pointerdown', this.unlock);
     this.node?.disconnect();
     this.node = null;
-    this.ctx?.close().catch(() => {});
+    // The context is the shell's: disconnect this toy's bus, never close it.
+    this.out?.disconnect();
+    this.out = null;
     this.ctx = null;
   }
 }

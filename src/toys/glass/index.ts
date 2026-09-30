@@ -171,7 +171,7 @@ class SingingGlass implements ToyInstance {
     this.hint = document.createElement('div');
     this.hint.className = 'gls-hint';
     ctx.overlay.append(this.hint);
-    ctx.mic.offer('Sing the glass’s note');
+    ctx.mic.offer('Sing the glass’s note', { echoCancel: true });
     ctx.panel.choice(
       'Glass',
       (Object.keys(SHAPES) as ShapeId[]).map((k) => ({ value: k, label: SHAPES[k].label })),

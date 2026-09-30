@@ -27,7 +27,7 @@ export interface ToyContext {
    * Microphone features (blow, level, pitch). Nothing listens until the player opts in: call
    * `offer(hint)` to show the mic button in the HUD; the shell stops listening when the toy closes.
    */
-  mic: Mic & { offer(hint: string): void };
+  mic: Mic & { offer(hint: string, opts?: { echoCancel?: boolean }): void };
   /**
    * Shared completion meter (a ring at the top of the screen). Pass 0..1 with an optional label
    * ("clean", "revealed"); pass null to hide it. Cheap to call every frame.

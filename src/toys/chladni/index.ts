@@ -97,7 +97,7 @@ class Chladni implements ToyInstance {
     this.trickle = ctx.sound.loop('trickle');
     this.slip = ctx.sound.slip();
     ctx.canvas.addEventListener('pointerdown', this.wake);
-    ctx.mic.offer('Sing or hum a note to the plate');
+    ctx.mic.offer('Sing or hum a note to the plate', { echoCancel: true });
 
     this.style = document.createElement('style');
     this.style.textContent = STYLE;

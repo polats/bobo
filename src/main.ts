@@ -58,11 +58,12 @@ function mountToy(toy: Toy): () => void {
   const offSound = onSoundChange(showMute);
   // The mic button only appears for toys that offer it; tapping it asks for permission once.
   let micHint = '';
+  let micEcho = false;
   const micBtn = hudButton('', 'hud-mic', async () => {
     if (mic.active) {
       mic.stop();
     } else {
-      const ok = await mic.start();
+      const ok = await mic.start({ echoCancel: micEcho });
       toast(stage, ok ? micHint : 'The microphone isn’t available');
     }
     micBtn.innerHTML = micIcon(mic.active);
@@ -71,8 +72,9 @@ function mountToy(toy: Toy): () => void {
   micBtn.innerHTML = micIcon(false);
   micBtn.hidden = true;
   const micCtx = Object.assign(mic, {
-    offer(hint: string) {
+    offer(hint: string, opts: { echoCancel?: boolean } = {}) {
       micHint = hint;
+      micEcho = !!opts.echoCancel;
       micBtn.hidden = false;
     },
   });

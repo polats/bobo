@@ -174,11 +174,52 @@ function audio(): AudioContext | null {
   master = ctx.createGain();
   master.gain.value = enabled ? 0.8 : 0;
   master.connect(comp).connect(ctx.destination);
+  // A meter on what actually leaves the speaker: the mic's echo suppression compares against it.
+  meter = ctx.createAnalyser();
+  meter.fftSize = 2048;
+  meter.smoothingTimeConstant = 0;
+  comp.connect(meter);
   pool = new ResonatorPool(ctx, master);
   return ctx;
 }
 
 let pool: ResonatorPool | null = null;
+let meter: AnalyserNode | null = null;
+let meterTime: Float32Array<ArrayBuffer> | null = null;
+let meterFreq: Float32Array<ArrayBuffer> | null = null;
+
+/**
+ * The shared audio graph, for toys that synthesise their own signal (a plate's modes, a glass's
+ * friction solve): the shell's context and a fresh bus into its master, so the toy follows the mute
+ * toggle, shares the compressor, and is heard by the mic's echo suppression. Disconnect the bus on
+ * destroy; never close the context.
+ */
+export function audioOutput(): { ctx: AudioContext; bus: GainNode } | null {
+  const c = audio();
+  if (!c || !master) return null;
+  const bus = c.createGain();
+  bus.connect(master);
+  return { ctx: c, bus };
+}
+
+/** What the speaker is playing right now: RMS and the frequency of the loudest spectral peak. */
+export function outputNow(): { rms: number; peakHz: number; peakShare: number } {
+  if (!meter || !ctx) return { rms: 0, peakHz: 0, peakShare: 0 };
+  if (!meterTime) meterTime = new Float32Array(meter.fftSize);
+  if (!meterFreq) meterFreq = new Float32Array(meter.frequencyBinCount);
+  meter.getFloatTimeDomainData(meterTime);
+  let sum = 0;
+  for (let i = 0; i < meterTime.length; i++) sum += meterTime[i] * meterTime[i];
+  meter.getFloatFrequencyData(meterFreq);
+  let best = -Infinity, bi = 0, total = 0;
+  for (let i = 2; i < meterFreq.length; i++) {
+    const p = 10 ** (meterFreq[i] / 10);
+    total += p;
+    if (meterFreq[i] > best) [best, bi] = [meterFreq[i], i];
+  }
+  const share = total > 0 ? 10 ** (best / 10) / total : 0;
+  return { rms: Math.sqrt(sum / meterTime.length), peakHz: (bi * ctx.sampleRate) / meter.fftSize, peakShare: share };
+}
 let slipIds = 0;
 
 /**

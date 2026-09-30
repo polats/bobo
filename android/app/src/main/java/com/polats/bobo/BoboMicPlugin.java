@@ -4,6 +4,7 @@ import android.Manifest;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
+import android.media.audiofx.AcousticEchoCanceler;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -51,10 +52,14 @@ public class BoboMicPlugin extends Plugin {
     }
 
     private void begin(PluginCall call) {
+        boolean echoCancel = Boolean.TRUE.equals(call.getBoolean("echoCancel", false));
         if (!running) {
             int min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
             // UNPROCESSED skips automatic gain and noise suppression, so a harder blow reads louder.
-            int source = android.os.Build.VERSION.SDK_INT >= 24 ? MediaRecorder.AudioSource.UNPROCESSED : MediaRecorder.AudioSource.VOICE_RECOGNITION;
+            // Toys listening for singing over their own tone take the voice-call path with the
+            // platform's echo canceller instead.
+            int source = echoCancel ? MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                : android.os.Build.VERSION.SDK_INT >= 24 ? MediaRecorder.AudioSource.UNPROCESSED : MediaRecorder.AudioSource.VOICE_RECOGNITION;
             AudioRecord rec;
             try {
                 rec = new AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, FRAME * 4));
@@ -65,6 +70,10 @@ public class BoboMicPlugin extends Plugin {
             } catch (SecurityException e) {
                 call.reject("Microphone permission missing");
                 return;
+            }
+            if (echoCancel && AcousticEchoCanceler.isAvailable()) {
+                AcousticEchoCanceler aec = AcousticEchoCanceler.create(rec.getAudioSessionId());
+                if (aec != null) aec.setEnabled(true);
             }
             final AudioRecord r = rec;
             running = true;

@@ -2,8 +2,9 @@
 // mode's amplitude in the simulation every frame. The shell's modal voice (sound.modes) fires
 // one-shot rings that can't be damped or driven afterwards; here a finger pressed on the plate, a bow
 // building a resonance or a held note are heard exactly as the sand feels them. A second sine plays
-// the forced response at the sung pitch. Mute follows the shell's sound toggle.
-import { onSoundChange, soundEnabled } from '../../shell/sound';
+// the forced response at the sung pitch. It plays on the shell's shared output (mute, compressor,
+// and the mic's echo suppression all see it).
+import { audioOutput, unlockSound } from '../../shell/sound';
 
 export class PlateVoice {
   private ac: AudioContext | null = null;
@@ -11,39 +12,23 @@ export class PlateVoice {
   private oscs: { o: OscillatorNode; g: GainNode; level: number }[] = [];
   private drive: { o: OscillatorNode; g: GainNode; level: number } | null = null;
   private noise: AudioBuffer | null = null;
-  private offMute: () => void;
   private duck = 1;
 
   constructor() {
-    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (AC) {
-      try {
-        this.ac = new AC({ latencyHint: 'interactive' });
-        const comp = this.ac.createDynamicsCompressor();
-        comp.threshold.value = -16;
-        comp.knee.value = 10;
-        comp.ratio.value = 5;
-        comp.attack.value = 0.002;
-        comp.release.value = 0.2;
-        this.out = this.ac.createGain();
-        this.out.gain.value = soundEnabled() ? 1 : 0;
-        this.out.connect(comp).connect(this.ac.destination);
-        const n = this.ac.sampleRate * 0.25;
-        this.noise = this.ac.createBuffer(1, n, this.ac.sampleRate);
-        const d = this.noise.getChannelData(0);
-        for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
-      } catch {
-        this.ac = null;
-      }
+    const shared = audioOutput();
+    if (shared) {
+      this.ac = shared.ctx;
+      this.out = shared.bus;
+      const n = this.ac.sampleRate * 0.25;
+      this.noise = this.ac.createBuffer(1, n, this.ac.sampleRate);
+      const d = this.noise.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
     }
-    this.offMute = onSoundChange((on) => {
-      if (this.out && this.ac) this.out.gain.setTargetAtTime(on ? 1 : 0, this.ac.currentTime, 0.02);
-    });
   }
 
   /** Browsers start audio only from a gesture: call on pointerdown. */
   wake() {
-    if (this.ac && this.ac.state !== 'running') this.ac.resume().catch(() => {});
+    unlockSound();
   }
 
   get running() {
@@ -130,8 +115,14 @@ export class PlateVoice {
   }
 
   destroy() {
-    this.offMute();
-    this.ac?.close().catch(() => {});
+    // The context is the shell's: fade and disconnect this toy's bus, never close it.
+    for (const o of [...this.oscs.map((v) => v.o), this.drive?.o])
+      try {
+        o?.stop();
+      } catch {
+        /* already stopped */
+      }
+    this.out?.disconnect();
     this.ac = null;
   }
 }

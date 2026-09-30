@@ -141,7 +141,7 @@ public class BoboMicPlugin: CAPPlugin, CAPBridgedPlugin {
             DispatchQueue.main.async {
                 guard granted else { return call.resolve(["granted": false]) }
                 do {
-                    try self.begin()
+                    try self.begin(echoCancel: call.getBool("echoCancel") ?? false)
                     call.resolve(["granted": true])
                 } catch {
                     call.reject("Microphone failed to start: \(error.localizedDescription)")
@@ -157,15 +157,17 @@ public class BoboMicPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func begin() throws {
+    private func begin(echoCancel: Bool) throws {
         if running { return }
         let session = AVAudioSession.sharedInstance()
         saved = (session.category, session.mode, session.categoryOptions)
         // Keep toy sounds on the loudspeaker and mixed with other audio while listening. Measurement
-        // mode turns off automatic gain, so a harder blow really reads louder.
-        try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .mixWithOthers, .allowBluetoothA2DP])
+        // mode turns off automatic gain, so a harder blow really reads louder. Toys that listen for
+        // singing over their own tone ask for Apple's voice processing (echo cancellation) instead.
+        try session.setCategory(.playAndRecord, mode: echoCancel ? .default : .measurement, options: [.defaultToSpeaker, .mixWithOthers, .allowBluetoothA2DP])
         try session.setActive(true)
         let input = engine.inputNode
+        try? input.setVoiceProcessingEnabled(echoCancel)
         let format = input.outputFormat(forBus: 0)
         let rate = format.sampleRate
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
