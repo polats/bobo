@@ -120,16 +120,20 @@ class MicInput implements Mic {
     // the echo is there), subtract that predicted echo, and ignore a pitch that is just the toy's
     // own loudest tone unless the voice clearly rises above the echo.
     const out = outputNow();
-    if (out.rms > 1e-3) {
-      const r = f.rms / out.rms;
-      this.leak = r < this.leak ? r : Math.min(1, this.leak * 1.004);
+    // Learn the leak only from real frames while the speaker is actually playing, and let it
+    // glide (a quick fall toward quieter ratios, a slow rise), so one zero frame can't erase it.
+    if (out.rms > 2e-3 && f.rms > 1e-5) {
+      const r = Math.min(1, f.rms / out.rms);
+      this.leak = r < this.leak ? this.leak + (r - this.leak) * 0.25 : Math.min(1, this.leak * 1.003);
     }
     const echo = this.leak * out.rms;
     const voiced = Math.sqrt(Math.max(0, f.rms * f.rms - 1.6 * echo * echo));
-    if (f.pitch > 0 && out.peakHz > 0 && out.peakShare > 0.5 && voiced < 0.7 * f.rms) {
-      const ratio = f.pitch / out.peakHz;
-      const octave = Math.round(Math.log2(ratio));
-      if (Math.abs(Math.log2(ratio) - octave) < 0.05 && Math.abs(octave) <= 1) f = { ...f, pitch: 0, clarity: Math.min(f.clarity, 0.5) };
+    // A pitch that matches what the speaker is playing (same note or an octave off) is the toy
+    // hearing itself, unless the player is clearly louder than the echo.
+    if (f.pitch > 0 && out.peakHz > 0 && out.peakShare > 0.5 && out.rms > 2e-3) {
+      const off = Math.log2(f.pitch / out.peakHz);
+      const same = Math.abs(off - Math.round(off)) < 0.06 && Math.abs(Math.round(off)) <= 1;
+      if (same && voiced < 0.85 * f.rms) f = { ...f, pitch: 0, clarity: Math.min(f.clarity, 0.5) };
     }
     if (++this.frames === 40) console.log(`[bobo] mic: ${Math.round(20 * Math.log10(f.rms + 1e-12))} dB, clarity ${f.clarity.toFixed(2)}, echo leak ${this.leak.toFixed(3)}`);
     // Near-digital silence (the first buffers, a muted input; no real mic sits below about -85 dB)
