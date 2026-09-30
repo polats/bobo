@@ -179,6 +179,10 @@ function audio(): AudioContext | null {
   meter.fftSize = 2048;
   meter.smoothingTimeConstant = 0;
   comp.connect(meter);
+  // An analyser only runs when something downstream pulls on it: give it a silent path out.
+  const hush = ctx.createGain();
+  hush.gain.value = 0;
+  meter.connect(hush).connect(ctx.destination);
   pool = new ResonatorPool(ctx, master);
   return ctx;
 }
