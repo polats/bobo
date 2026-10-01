@@ -215,6 +215,7 @@ const DESIGNS: Design[] = [
   { title: 'LUCKY LANTERN', sub: 'NIGHT MARKET', top: '#d8243a', bottom: '#5e0b1f', ink: '#fff1c9', accent: '#f6c445', foil: [0.78, 0.79, 0.82], coat: 'silver' },
   { title: 'MOON FRUIT', sub: 'MIDNIGHT ORCHARD', top: '#1d6f8c', bottom: '#0b2140', ink: '#ffe9f2', accent: '#ff8fb8', foil: [0.8, 0.8, 0.84], coat: 'crackle' },
   { title: 'JADE FORTUNE', sub: 'TEA HOUSE SPECIAL', top: '#1e8a5a', bottom: '#0b3324', ink: '#fdf6dc', accent: '#f2d27a', foil: [0.82, 0.78, 0.66], coat: 'latex' },
+  { title: 'GOLDEN KOI', sub: 'LANTERN FESTIVAL', top: '#b31b1b', bottom: '#3d0606', ink: '#fff0c2', accent: '#ffcf5a', foil: [1, 0.78, 0.36], coat: 'gold' },
   { title: 'NEON CHERRY', sub: 'ARCADE ALLEY', top: '#7a2bd6', bottom: '#1c0a3d', ink: '#f5ecff', accent: '#45f0d2', foil: [0.76, 0.78, 0.84], coat: 'holo' },
 ];
 

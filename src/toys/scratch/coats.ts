@@ -2,12 +2,12 @@
 // looks, how it sounds and buzzes, and what its crumbs do. Choosing a coat writes its values into the
 // toy's settings (the Tune panel then edits that coat live); later, upgrades layer on top.
 
-export type CoatId = 'silver' | 'crackle' | 'latex' | 'holo';
+export type CoatId = 'silver' | 'crackle' | 'latex' | 'holo' | 'gold';
 
 export interface CoatDef {
   id: CoatId;
   label: string;
-  /** Shader look: 0 silver latex, 1 crackle lacquer, 2 rubbery latex, 3 holographic grating. */
+  /** Shader look: 0 silver latex, 1 crackle lacquer, 2 rubbery latex, 3 holographic grating, 4 gold leaf. */
   mode: number;
   colour: [number, number, number];
   /** Values for the toy's settings object. */
@@ -24,7 +24,7 @@ export interface CoatDef {
 }
 
 /** Settings for coats without a base layer (the base sliders still need values). */
-const NO_BASE = { layers: 1, basePasses: 3, baseFlakeSize: 2.5, baseStrength: 1, baseSmear: 0.2 };
+const NO_BASE = { layers: 1, basePasses: 3, baseFlakeSize: 2.5, baseStrength: 1, baseSmear: 0.2, restick: 0 };
 
 export const COATS: Record<CoatId, CoatDef> = {
   // Latex and aluminium pigment over a release varnish: brittle flakes and dusty crumbs.
@@ -36,7 +36,7 @@ export const COATS: Record<CoatId, CoatDef> = {
     set: {
       flakeSize: 4.5, flakeSpread: 0.55, strength: 1, adhesionNoise: 0.6, brittleness: 0.35, abrasionResist: 1, speedGain: 0.4,
       crackReach: 0.2, chainDepth: 6, smear: 0, passes: 0, ...NO_BASE,
-      perFlake: 1.2, friction: 9, curls: 0.45,
+      perFlake: 1.2, friction: 9, curls: 0.45, flutter: 0,
       sheen: 1, streak: 0.8, glitter: 1, lip: 3, lift: 0.7,
     },
     pitch: 1,
@@ -55,7 +55,7 @@ export const COATS: Record<CoatId, CoatDef> = {
     set: {
       flakeSize: 8, flakeSpread: 0.75, strength: 0.8, adhesionNoise: 0.35, brittleness: 0.45, abrasionResist: 4, speedGain: 0.7,
       crackReach: 0.05, chainDepth: 2, smear: 0, passes: 0, ...NO_BASE,
-      perFlake: 2.2, friction: 7, curls: 0,
+      perFlake: 2.2, friction: 7, curls: 0, flutter: 0,
       sheen: 1.6, streak: 0, glitter: 0.6, lip: 4.5, lift: 1.1,
     },
     pitch: 1.5,
@@ -74,8 +74,8 @@ export const COATS: Record<CoatId, CoatDef> = {
     set: {
       flakeSize: 3, flakeSpread: 0.3, strength: 1.6, adhesionNoise: 0.4, brittleness: 0, abrasionResist: 0.55, speedGain: 0.1,
       crackReach: 0.2, chainDepth: 0, smear: 0.45, passes: 0,
-      layers: 2, basePasses: 2, baseFlakeSize: 2.5, baseStrength: 1, baseSmear: 0.25,
-      perFlake: 0.6, friction: 18, curls: 1,
+      layers: 2, basePasses: 2, baseFlakeSize: 2.5, baseStrength: 1, baseSmear: 0.25, restick: 2.5,
+      perFlake: 0.6, friction: 18, curls: 1, flutter: 0,
       sheen: 0.15, streak: 0, glitter: 0, lip: 4, lift: 0.4,
     },
     pitch: 0.45,
@@ -95,13 +95,33 @@ export const COATS: Record<CoatId, CoatDef> = {
     set: {
       flakeSize: 3.5, flakeSpread: 0.4, strength: 0.8, adhesionNoise: 0.4, brittleness: 0.2, abrasionResist: 1.6, speedGain: 0.4,
       crackReach: 0.2, chainDepth: 4, smear: 0, passes: 0, ...NO_BASE,
-      perFlake: 1, friction: 9, curls: 0.6,
+      perFlake: 1, friction: 9, curls: 0.6, flutter: 0,
       sheen: 1.2, streak: 0.4, glitter: 1.4, lip: 2, lift: 0.6,
     },
     pitch: 1.35,
     rate: 1.1,
     stiffness: 0.75,
     sharp: 1.1,
+    glassy: 0,
+  },
+  // Gold leaf: metal beaten thinner than paper, laid in overlapping squares. It has almost no strength,
+  // tears raggedly at the edge, and its flecks are so light they flutter, flip and catch the lamp, and a
+  // breath sends them flying.
+  gold: {
+    id: 'gold',
+    label: 'Gold leaf',
+    mode: 4,
+    colour: [1, 0.78, 0.36],
+    set: {
+      flakeSize: 6, flakeSpread: 0.9, strength: 0.45, adhesionNoise: 0.5, brittleness: 0.5, abrasionResist: 0.45, speedGain: 0.3,
+      crackReach: 0.1, chainDepth: 2, smear: 0, passes: 0, ...NO_BASE,
+      perFlake: 1.6, friction: 5, curls: 0, flutter: 1,
+      sheen: 1.4, streak: 0, glitter: 1.2, lip: 0.8, lift: 1.6,
+    },
+    pitch: 1.7,
+    rate: 1.5,
+    stiffness: 0.95,
+    sharp: 0.5,
     glassy: 0,
   },
 };

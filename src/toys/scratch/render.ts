@@ -87,6 +87,11 @@ vec3 spectral(float l) {
   return max(vec3(3.2406 * X - 1.5372 * Y - 0.4986 * Z, -0.9689 * X + 1.8758 * Y + 0.0415 * Z, 0.0557 * X - 0.204 * Y + 1.057 * Z), 0.0);
 }
 float sdBox(vec2 p, vec2 b, float r) { vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+}
 // Coat height: a flake working loose rises off the card before it pops.
 float lifted(float dmg) { return uLift * smoothstep(0.35, 1.0, dmg); }
 float height(vec2 uv) { vec4 c = texture(uCoat, uv); return c.r * 1.25 * (1.0 + lifted(c.g)); }
@@ -171,6 +176,18 @@ void main() {
     // Matte rubber with a fine grain.
     float grainN = hash(floor(px / 1.2)) * 0.06;
     foil = uFoil * (0.75 + 0.25 * diff) * (0.97 + grainN) * (1.0 - worn * 0.15) + spec * 0.3;
+  } else if (uMode == 4) {
+    // Gold leaf: a mirror, so it shows the room (dark below, the lamp's warm pool above) through a
+    // fine crinkle, laid in overlapping squares whose seams read as slightly thicker lines.
+    vec2 cp = px / uPx.x * 40.0;
+    vec2 wr = vec2(vnoise(cp), vnoise(cp + 17.0)) - 0.5;
+    vec2 wr2 = vec2(vnoise(cp * 3.1 + 5.0), vnoise(cp * 3.1 + 29.0)) - 0.5;
+    vec3 ng = normalize(n + vec3(wr * 0.45 + wr2 * 0.2, 0.0));
+    float env = smoothstep(-0.6, 0.6, -ng.y + ng.x * 0.3);
+    float m = pow(max(dot(ng, H), 0.0), 90.0) * 1.6 * uSheen;
+    vec2 sq = fract(px / (uPx.x * 0.17) + vec2(0.0, step(0.5, fract(px.x / (uPx.x * 0.34))) * 0.5));
+    float seam = (1.0 - smoothstep(0.0, 0.03, min(sq.x, sq.y))) * 0.25;
+    foil = uFoil * mix(0.35, 1.05, env) * (1.0 - seam) * (1.0 - worn * 0.5) + m * vec3(1.0, 0.92, 0.7) + glint * vec3(1.0, 0.9, 0.6);
   } else if (uMode == 3) {
     // A diffraction grating embossed in concentric rings: the first and second orders from the grating
     // equation, d sin(theta) = m lambda, seen from straight above, sweep round as the lamp moves.
@@ -226,6 +243,7 @@ uniform float uShadow;
 uniform float uCurl;
 uniform int uMode;
 uniform vec3 uBaseCol;
+float hash1(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 // CIE 1931 observer (Wyman, Sloan & Shirley's lobes, as in Bubble Wand) to linear sRGB, for one wavelength in nm.
 float lobe(float l, float a, float m, float g, float d) { float t = (l - m) * (l < m ? g : d); return a * exp(-0.5 * t * t); }
 vec3 spectral(float l) {
@@ -262,6 +280,23 @@ void main() {
     vec3 skin = mode == 3 ? spectral(420.0 + fract(vSeed * 7.1 + dot(n.xy, uLightDir.xy)) * 260.0) * 0.8 + foilC * 0.3 : foilC;
     vec3 col = mix(skin * diff * shade + sp * 0.7, vec3(0.38, 0.38, 0.4) * diff, spiral * (mode == 2 ? 0.3 : 0.75));
     o = vec4(col * aa * vAlpha, aa * vAlpha);
+    return;
+  }
+  if (mode == 4) {
+    // A fleck of leaf flipping as it flutters: it flashes when its face turns to the lamp.
+    float flip = abs(cos(vRot * 1.7 + vSeed * 9.0));
+    q.y /= max(0.15, flip);
+    float th0 = atan(q.y, q.x);
+    float rr = 0.8 + 0.15 * sin(4.0 * th0 + vSeed * 20.0) + 0.1 * sin(7.0 * th0 + vSeed * 31.0);
+    float ll = length(q) / rr;
+    if (ll > 1.0) discard;
+    float aa0 = 1.0 - smoothstep(0.85, 1.0, ll);
+    if (uShadow > 0.5) { o = vec4(0.0, 0.0, 0.0, 0.18 * aa0 * vAlpha * flip); return; }
+    float crink = hash1(floor(q * 3.0 + vSeed * 13.0)) * 0.18;
+    // Only a fleck that is face-on and angled at the lamp flashes.
+    float face = pow(flip, 8.0) * pow(0.5 + 0.5 * sin(vRot * 2.3 + vSeed * 40.0), 6.0);
+    vec3 col = foilC * (0.35 + 0.35 * flip + crink) + face * vec3(0.9, 0.8, 0.55);
+    o = vec4(col * aa0 * vAlpha, aa0 * vAlpha);
     return;
   }
   q.y /= 0.62;

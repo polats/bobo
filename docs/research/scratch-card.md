@@ -89,7 +89,9 @@ The meta exists to change the scratching. Currency only pays for upgrades. Every
    - **Crackle:** a dark lacquer crazed with pale lines; big plates, cracks that run a couple of flakes into untouched coat, straight-edged shards, glassy ticks (`impact('glass')`).
    - **Budget latex:** two layers. A grey skin that scuffs and smears ahead of the edge into smudges and ridges sits over a tacky gum base (its own flake pattern). The gum takes one bite per pass (a new touch, a reversal, or a scrub coming round), greying and sinking each time, and lets go on its second, so a clean patch takes three strokes. On the gum the scrape drops into a squeak and the buzz softens; each bite is a soft tacky tick and the final release a fuller snap. Gum crumbs roll into tan eraser curls. Any coat can have the base (Tune: Layers).
    - **Holo:** a foil embossed with concentric grating rings; colour from the grating equation (first and second orders, CIE observer) that sweeps round as the lamp moves; rainbow crumbs.
-   - **Next:** gold leaf (tearing, fluttering leaf), then scratch-art wax (a continuous curling shaving ribbon).
+   - **Re-sticking:** gum crumbs left lying still for a couple of seconds glue back down as tacky blobs that take a pass or two to rub off, so a sticky card wants a clean sweep.
+   - **Gold leaf** (Golden Koi): metal leaf with almost no strength, laid in overlapping squares whose seams show; a crinkled mirror that reflects the room. It tears raggedly, and its flecks flutter down slowly, swaying and flipping, flashing when a face turns to the lamp; breath sends them flying. Papery, high crinkle and a light buzz.
+   - **Next:** scratch-art wax (a continuous curling shaving ribbon).
 4. **Upgrade layer.** The base → coat → upgrades stack, meta off, A/B toggles, and the Tool and Technique tracks.
 5. **Crumbs and streaks.** Cling, sweep, the silver dust bonus, the combo ladder, lucky flakes.
 6. **Economy.** Prices, the balancing simulator, saving, the offline card stack, the jar as the bank.

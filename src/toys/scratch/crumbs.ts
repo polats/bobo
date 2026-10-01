@@ -14,6 +14,8 @@ export interface CrumbParams {
   friction: number;
   /** Strength of breath and two-finger puffs. */
   blow: number;
+  /** 0 = crumbs drop like grit; 1 = leaf: floats down slowly, swaying, and lifts at the slightest air. */
+  flutter: number;
 }
 
 export class Crumbs {
@@ -30,6 +32,8 @@ export class Crumbs {
   /** 1 while on the card, falls to 0 once it has gone over the edge. */
   readonly life = new Float32Array(MAX_CRUMBS);
   private readonly off = new Uint8Array(MAX_CRUMBS);
+  /** Seconds a crumb has lain still on the card (sticky crumbs glue back down). */
+  readonly rest = new Float32Array(MAX_CRUMBS);
   count = 0;
   /** Crumbs that came to rest or hit the card this frame (ticks). */
   landed = 0;
@@ -62,6 +66,18 @@ export class Crumbs {
     this.shade[i] = shade;
     this.life[i] = gone ? 1 + Math.random() * 0.5 : 1;
     this.off[i] = gone ? 1 : 0;
+    this.rest[i] = 0;
+  }
+
+  /** Is this crumb lying on the card (not flying off)? */
+  onCard(i: number) {
+    return !this.off[i] && this.z[i] <= 0 && this.life[i] > 0;
+  }
+
+  /** Remove a crumb (it has glued itself back down). */
+  absorb(i: number) {
+    this.life[i] = 0;
+    this.off[i] = 1;
   }
 
   /** Plough the crumbs under a tool at (x, y) moving with (tvx, tvy) cells/s along (ux, uy). */
@@ -88,23 +104,23 @@ export class Crumbs {
       const k = p.push * (na > 0 ? 1 : 0.25);
       this.vx[i] = tvx * k + (Math.random() - 0.5) * 30;
       this.vy[i] = tvy * k + (Math.random() - 0.5) * 30;
-      if (Math.random() < 0.04) this.vz[i] = 8 + Math.random() * 12;
+      if (Math.random() < 0.04 + p.flutter * 0.25) this.vz[i] = (8 + Math.random() * 12) * (1 + p.flutter * 0.5);
       this.spin[i] += (Math.random() - 0.5) * 20;
       this.ploughed++;
     }
   }
 
   /** A puff of air from (x, y): radial push that falls off with distance, and a little lift. */
-  blow(x: number, y: number, radius: number, power: number, dt: number) {
+  blow(x: number, y: number, radius: number, power: number, dt: number, flutter = 0) {
     for (let i = 0; i < this.count; i++) {
       if (this.off[i]) continue;
       const ox = this.x[i] - x, oy = this.y[i] - y;
       const d = Math.hypot(ox, oy) + 1;
       if (d > radius * 3) continue;
-      const f = (power * 900 * dt) / (1 + (d / radius) ** 2) / Math.max(0.6, this.size[i] * 0.4);
+      const f = ((power * 900 * dt) / (1 + (d / radius) ** 2) / Math.max(0.6, this.size[i] * 0.4)) * (1 + flutter * 1.5);
       this.vx[i] += (ox / d) * f;
       this.vy[i] += (oy / d) * f;
-      if (Math.random() < f * 0.02) this.vz[i] += 4 + Math.random() * 8;
+      if (Math.random() < f * 0.02 * (1 + flutter * 6)) this.vz[i] += (4 + Math.random() * 8) * (1 + flutter);
     }
   }
 
@@ -138,7 +154,14 @@ export class Crumbs {
       }
       const airborne = this.z[i] > 0;
       if (airborne) {
-        this.vz[i] -= 90 * dt;
+        // Leaf falls slowly against the air and sways side to side as it goes.
+        this.vz[i] -= 90 * dt * (1 - p.flutter * 0.8);
+        if (p.flutter > 0) {
+          const air = Math.exp(-p.flutter * 2.5 * dt);
+          this.vx[i] = this.vx[i] * air + Math.sin(this.rot[i] * 1.3 + i) * 40 * p.flutter * dt;
+          this.vy[i] = this.vy[i] * air + Math.cos(this.rot[i] * 0.9 + i) * 25 * p.flutter * dt;
+          this.vz[i] = Math.max(this.vz[i], -18);
+        }
         this.z[i] += this.vz[i] * dt;
         if (this.z[i] <= 0) {
           this.z[i] = 0;
@@ -152,7 +175,11 @@ export class Crumbs {
         this.vy[i] *= drag;
         if (v2 < 4) {
           this.vx[i] = this.vy[i] = 0;
-        } else this.rot[i] += this.spin[i] * dt * Math.min(1, Math.sqrt(v2) / 60);
+          this.rest[i] += dt;
+        } else {
+          this.rest[i] = 0;
+          this.rot[i] += this.spin[i] * dt * Math.min(1, Math.sqrt(v2) / 60);
+        }
       } else this.rot[i] += this.spin[i] * dt;
       this.x[i] += this.vx[i] * dt;
       this.y[i] += this.vy[i] * dt;
@@ -178,6 +205,7 @@ export class Crumbs {
       this.shade[i] = this.shade[j];
       this.life[i] = this.life[j];
       this.off[i] = this.off[j];
+      this.rest[i] = this.rest[j];
       i--;
     }
   }

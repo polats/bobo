@@ -347,7 +347,7 @@ export class Coat {
         if (f < 0 || hc <= 0 || this.fGone[f]) {
           bare += w;
           // Smeared coat on bare card wears off again under the tool.
-          if (hc > 0) h[c] = Math.max(0, hc - wear * w * 2);
+          if (hc > 0) h[c] = Math.max(0, hc - (wear * 2 + dl * 0.05 * t.hardness * press) * w);
           continue;
         }
         contact += w * hc;
@@ -445,6 +445,21 @@ export class Coat {
         } else this.markDirty(this.fCy[g] - 6, this.fCy[g] + 6);
       }
     }
+  }
+
+  /** A gum crumb settling back: a blob of coat over the cells around (x, y), radius r (cells). */
+  blob(x: number, y: number, r: number, to: number) {
+    const { W, H, h } = this;
+    const x0 = Math.max(0, Math.floor(x - r)), x1 = Math.min(W - 1, Math.ceil(x + r));
+    const y0 = Math.max(0, Math.floor(y - r)), y1 = Math.min(H - 1, Math.ceil(y + r));
+    for (let yy = y0; yy <= y1; yy++)
+      for (let xx = x0; xx <= x1; xx++) {
+        const d = Math.hypot(xx - x, yy - y) / r;
+        if (d >= 1) continue;
+        const c = yy * W + xx;
+        h[c] = Math.max(h[c], to * (1 - d * d * 0.6));
+      }
+    this.markDirty(y0, y1 + 1);
   }
 
   /** A sticky flake worn down a pass: its cells thin to at most `to` (they grey and sink). */

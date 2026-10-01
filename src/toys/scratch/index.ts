@@ -169,6 +169,7 @@ class ScratchOff implements ToyInstance {
     baseFlakeSize: 2.5,
     baseStrength: 1,
     baseSmear: 0.2,
+    restick: 0,
     // Tool
     toolSize: 1,
     toolHardness: 1,
@@ -184,6 +185,7 @@ class ScratchOff implements ToyInstance {
     push: 0.85,
     friction: 9,
     blow: 1,
+    flutter: 0,
     // Feel
     grit: 1,
     scrapeGain: 1,
@@ -344,7 +346,7 @@ class ScratchOff implements ToyInstance {
 
   private crumbParams(): CrumbParams {
     const c = this.cfg;
-    return { perFlake: c.perFlake, push: c.push, friction: c.friction, blow: c.blow };
+    return { perFlake: c.perFlake, push: c.push, friction: c.friction, blow: c.blow, flutter: c.flutter };
   }
 
   private newCard() {
@@ -432,6 +434,7 @@ class ScratchOff implements ToyInstance {
     panel.slider(c, 'baseFlakeSize', { label: 'Base flake size', min: 1.5, max: 8, step: 0.5, onChange: later });
     panel.slider(c, 'baseStrength', { label: 'Base tack', min: 0.3, max: 3, step: 0.05 });
     panel.slider(c, 'baseSmear', { label: 'Base smear', min: 0, max: 0.9, step: 0.05 });
+    panel.slider(c, 'restick', { label: 'Gum crumbs re-stick after (s, 0 = never)', min: 0, max: 8, step: 0.25 });
     panel.heading('Tool');
     panel.slider(c, 'toolSize', { label: 'Size', min: 0.4, max: 3, step: 0.05 });
     panel.slider(c, 'toolHardness', { label: 'Hardness', min: 0.2, max: 3, step: 0.05 });
@@ -442,6 +445,7 @@ class ScratchOff implements ToyInstance {
     panel.slider(c, 'push', { label: 'Plough', min: 0, max: 1.5, step: 0.05 });
     panel.slider(c, 'friction', { label: 'Friction', min: 1, max: 30, step: 0.5 });
     panel.slider(c, 'blow', { label: 'Blow strength', min: 0.2, max: 3, step: 0.05 });
+    panel.slider(c, 'flutter', { label: 'Flutter (leaf)', min: 0, max: 1, step: 0.05 });
     panel.heading('Feel');
     panel.slider(c, 'grit', { label: 'Grit clicks', min: 0, max: 2, step: 0.05 });
     panel.slider(c, 'scrapeGain', { label: 'Scrape', min: 0, max: 2, step: 0.05 });
@@ -511,7 +515,7 @@ class ScratchOff implements ToyInstance {
         }
         const [bx, by] = toCell(u, v);
         blowPower = (0.8 + Math.min(1.5, sp / this.ctx.pixelRatio / 12)) * this.cfg.blow;
-        this.crumbs.blow(bx, by, this.GW * 0.18, blowPower, dt);
+        this.crumbs.blow(bx, by, this.GW * 0.18, blowPower, dt, this.cfg.flutter);
         blowing = true;
       } else if (this.phase === 'scratch') {
         for (const q of pts) {
@@ -628,7 +632,7 @@ class ScratchOff implements ToyInstance {
     const breath = this.ctx.mic.blow;
     if (breath > 0.06 && !blowing) {
       blowPower = (0.7 + breath * 1.6) * this.cfg.blow;
-      this.crumbs.blow(this.GW * 0.5, this.GH * 0.62, this.GW * 0.3, blowPower, dt);
+      this.crumbs.blow(this.GW * 0.5, this.GH * 0.62, this.GW * 0.3, blowPower, dt, this.cfg.flutter);
       blowing = true;
     }
 
@@ -642,6 +646,7 @@ class ScratchOff implements ToyInstance {
       }
     }
     this.crumbs.step(dt, cp, (x, y) => x >= 0 && y >= 0 && x < this.GW && y < this.GH);
+    if (this.base && this.cfg.restick > 0 && this.phase === 'scratch' && this.frameNo % 6 === 0) this.restick();
 
     this.stepPhase(dt);
     if (this.phase === 'scratch' && this.frameNo % 4 === 0) this.checkReveal();
@@ -718,6 +723,24 @@ class ScratchOff implements ToyInstance {
     L[1] += (ty - L[1]) * k;
   }
 
+  /**
+   * Gum crumbs left lying on the card glue back down as a tacky blob (on bare card, or on gum that's
+   * been worn thin), so a sticky card wants a clean sweep, not a half-done patch.
+   */
+  private restick() {
+    const cr = this.crumbs, base = this.base!;
+    let n = 0;
+    for (let i = 0; i < cr.count && n < 6; i++) {
+      if (cr.shade[i] < 1.5 || !cr.onCard(i) || cr.rest[i] < this.cfg.restick * (0.8 + ((i * 0.618) % 1) * 0.4)) continue;
+      const x = cr.x[i], y = cr.y[i];
+      if (!inCoat((x + 0.5) / this.GW, (y + 0.5) / this.GH)) continue;
+      base.blob(x, y, Math.max(1.2, cr.size[i] * 0.7), 0.6);
+      cr.absorb(i);
+      n++;
+    }
+    if (n) this.ctx.sound.play('squish', { pitch: 1.6 + Math.random() * 0.4, gain: 0.08 * n });
+  }
+
   private newPass() {
     this.turned = 0;
     this.coat.newPass();
@@ -746,7 +769,7 @@ class ScratchOff implements ToyInstance {
         const vx = (stroke ? stroke.ux * fly : 0) + (Math.random() - 0.5) * 50;
         const vy = (stroke ? stroke.uy * fly : 0) + (Math.random() - 0.5) * 50;
         // Base crumbs carry +2 on their shade so the renderer colours them as the base.
-        this.crumbs.add(co.bx[i] + (Math.random() - 0.5) * 2, co.by[i] + (Math.random() - 0.5) * 2, sz, vx, vy, Math.random() < 0.25 ? 6 + Math.random() * 12 : 0, 0.85 + Math.random() * 0.3 + (isBase ? 2 : 0));
+        this.crumbs.add(co.bx[i] + (Math.random() - 0.5) * 2, co.by[i] + (Math.random() - 0.5) * 2, sz, vx, vy, Math.random() < 0.25 + this.cfg.flutter * 0.5 ? (6 + Math.random() * 12) * (1 + this.cfg.flutter) : 0, 0.85 + Math.random() * 0.3 + (isBase ? 2 : 0));
       }
       if (clicks < budget && this.cfg.grit > 0) {
         clicks++;
