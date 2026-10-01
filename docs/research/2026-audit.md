@@ -26,7 +26,7 @@ The physics in most of these toys is decoration on a rules-based game: the outco
 
 ## Re-judged on simulation only (2026-09-30)
 
-The first pass above mixed in game-design criteria (challenge, puzzles, failure) that don't belong in bobo's goal. This pass scores only the simulation: how novel it is, whether what you see, hear and feel emerges from it and responds to *how* you interact, and how rich that sensory response is. Foundry, Spool Sort and Dig Down were scored after their rebuilds.
+The first pass above mixed in game-design criteria (challenge, puzzles, failure). Toys are told apart by their simulation, not their progression ([game-design.md](game-design.md)), so this pass scores only the simulation, with any meta layer turned off: how novel it is, whether what you see, hear and feel emerges from it and responds to *how* you interact, and how rich that sensory response is. Foundry, Spool Sort and Dig Down were scored after their rebuilds.
 
 | Toy | Verdict | Novelty | Emergent | Satisfying | Best next simulation upgrade | Effort |
 |---|---|:-:|:-:|:-:|---|:-:|

@@ -45,6 +45,7 @@ const CATALOG: Record<string, Entry> = {
   mow: { added: '2026-09-29T17:06:55-04:00', category: 'Make & reveal' },
   dig: { added: '2026-09-29T12:08:03-04:00', category: 'Sand & powder' },
   spool: { added: '2026-09-29T11:46:37-04:00', category: 'Cloth & yarn' },
+  scratch: { added: '2026-10-01T12:00:00-04:00', category: 'Make & reveal' },
 };
 
 export interface Update {

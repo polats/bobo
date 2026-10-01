@@ -300,7 +300,7 @@ The yarn/cloth 2MP episodes are in cloth-knitting.md §5 and not repeated here, 
 ```
 
 - **Session target** (est): shear about 60–120 s, spin about 45 s, knit about 60–120 s for a short scarf.
-- **Every stage is a toy on its own.** The hub can deep-link to "Shear only", "Spin only" or "Knit only", so bobo's sandbox rule holds: no forced progression.
+- **Every stage is a toy on its own.** The hub can deep-link to "Shear only", "Spin only" or "Knit only", so bobo's sandbox-first rule holds ([game-design.md](game-design.md)): progression is opt-in, never a lock on play.
 - **Sheep variety** (the curiosity driver per Kao et al.): white, black, a Jacob with spots (the spots survive into the yarn as tweed), a muddy one (tips very dark, big reveal), and a "Shrek-size" overgrown one (long staples, heavy flop).
 
 ### 7.2 Per-step technique and phone budgets (iPhone 13 mini, 60 fps, all **(est)**)

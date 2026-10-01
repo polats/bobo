@@ -1,7 +1,7 @@
 // Records each toy with autoplay input via CDP screencast into frames/<toy>/ as JPEGs + timestamps.
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints', 'chladni', 'glass', 'frost', 'bubble', 'plasma', 'snap', 'hourglass', 'honey'];
+const toys = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'goo', 'sand', 'pool', 'splash', 'cloth', 'laundry', 'thread', 'fire', 'jelly', 'demolition', 'ferro', 'marble', 'merge', 'rinse', 'sandjar', 'spool', 'dig', 'knockdown', 'peel', 'pour', 'mow', 'foundry', 'ink-letter', 'kintsugi', 'prints', 'chladni', 'glass', 'frost', 'bubble', 'plasma', 'snap', 'hourglass', 'honey', 'scratch'];
 const WARM = 1500, DUR = 8400;
 // Capture size: 360×480 (3:4) matches the hub's preview cards; scripted moves were authored at 300×375.
 const VW = Number(process.env.VW ?? 360), VH = Number(process.env.VH ?? 480);
@@ -251,6 +251,22 @@ const scripts = {
       await wait(2300);
       await p.mouse.up();
       await wait(150);
+    }
+  },
+  async scratch(q) {
+    // A winning card filling the frame, scratched in coin zigzags until the coat bursts off.
+    const p = q.raw;
+    await p.evaluate(() => window.__scratch.preview());
+    await wait(300);
+    const b = await p.evaluate(() => window.__scratch.box());
+    const rows = 16;
+    for (let r = 0; r < rows; r++) {
+      if ((await p.evaluate(() => window.__scratch.stats().phase)) !== 'scratch') break;
+      const y = b.y0 + 8 + (r * (b.y1 - b.y0 - 16)) / (rows - 1);
+      const [x0, x1] = r % 2 ? [b.x1 - 4, b.x0 + 4] : [b.x0 + 4, b.x1 - 4];
+      await p.mouse.move(x0, y); await p.mouse.down();
+      for (let i = 1; i <= 10; i++) { await p.mouse.move(x0 + ((x1 - x0) * i) / 10, y + Math.sin(i * 0.9) * 6 + i * 0.8); await wait(18); }
+      await p.mouse.up();
     }
   },
   async merge(p) {

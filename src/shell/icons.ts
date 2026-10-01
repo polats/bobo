@@ -73,6 +73,8 @@ ICONS.snap = svg('<path d="M3 16c2-1 3.5-2.5 5-4"/><path d="M10 10.5c1-1.2 2-2.2
 ICONS.hourglass = svg('<path d="M6 3.5h12M6 20.5h12"/><path d="M7.5 3.5c0 4.5 4.5 6 4.5 8.5s-4.5 4-4.5 8.5M16.5 3.5c0 4.5-4.5 6-4.5 8.5s4.5 4 4.5 8.5"/><path d="M9.5 18.5c.8-1 1.6-1.5 2.5-1.5s1.7.5 2.5 1.5Z" fill="currentColor"/>');
 // Honey Drizzle: a dipper with a coiling thread.
 ICONS.honey = svg('<path d="M12 3v5"/><rect x="9.5" y="8" width="5" height="4" rx="1.6"/><path d="M12 12v4"/><path d="M8 19.5c1-1.5 2-1.8 4-1.8s3 .3 4 1.8M9.5 18c.8-1 1.5-1.2 2.5-1.2s1.7.2 2.5 1.2"/>');
+// Scratch Off: a ticket with a coin scraping a scratched swath.
+ICONS.scratch = svg('<rect x="3" y="5.5" width="14" height="13" rx="1.6"/><path d="M6 10.5c2-1 4-1.2 6-.6M6 13.5c1.6-.8 3.4-1 5-.6"/><circle cx="17.5" cy="14.5" r="3.5"/><path d="M16.3 14.5h2.4"/>');
 
 const FALLBACK = svg('<circle cx="12" cy="12" r="7"/><path d="M12 8v4l2.5 2.5"/>');
 
