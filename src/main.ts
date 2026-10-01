@@ -184,7 +184,7 @@ function autoplay(pointers: Pointers, t: number) {
     pointers.active.delete(id);
     return;
   }
-  if (!p) pointers.active.set(id, { id, x, y, dx: 0, dy: 0, down: true, justDown: true, held: 0 });
+  if (!p) pointers.active.set(id, { id, x, y, dx: 0, dy: 0, down: true, justDown: true, held: 0, pressure: 0.5, size: 1 });
   else {
     p.dx = x - p.x;
     p.dy = y - p.y;

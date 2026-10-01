@@ -3,7 +3,7 @@ import type { Loop, Slip } from '../../shell/sound';
 import { Coat, type CoatParams, type ToolShape } from './coat';
 import { Crumbs, type CrumbParams } from './crumbs';
 import { CARD_ASPECT, COAT_BOX, inCoat, makeCard, paintCard, paintCoatPrint, type Card } from './card';
-import { ScratchRenderer, type CardPose } from './render';
+import { ScratchRenderer, type CardPose, type ToolView } from './render';
 
 export const scratchToy: Toy = {
   id: 'scratch',
@@ -51,6 +51,9 @@ interface ToolDef {
   rough: number;
 }
 
+/** Which tool drawing the renderer uses (the nail is your own finger). */
+const TOOL_VIEW: Record<ToolId, number> = { nail: 0, coin: 1, key: 2, scraper: 3 };
+
 const TOOLS: Record<ToolId, ToolDef> = {
   nail: { label: 'Nail', r: 6, flat: 0.1, hardness: 0.35, abrasion: 0.45, freq: 900, sharp: 0.3, rough: 0.6 },
   coin: { label: 'Coin', r: 11, flat: 0.85, hardness: 1, abrasion: 0.35, freq: 2600, sharp: 0.8, rough: 1 },
@@ -84,6 +87,12 @@ class ScratchOff implements ToyInstance {
   private seed = (Math.random() * 1e9) | 0;
   private tool: ToolId = 'coin';
   private last = new Map<number, { x: number; y: number; ux: number; uy: number }>();
+  private toolView: ToolView = { kind: 0, x: 0, y: 0, ux: 0, uy: 1, r: 1, press: 1, alpha: 0 };
+  /** Range of pressure and contact size seen so far: if either moves, the screen can sense it. */
+  private pRange = [1, 0];
+  private sRange = [1e9, 0];
+  private press = 1;
+  private pressMode: 'force' | 'size' | 'hold' = 'hold';
   private seen = new Set<number>();
   private light: [number, number, number] = [0.3, 0.1, 0.7];
   private pinged: boolean[] = [];
@@ -137,6 +146,8 @@ class ScratchOff implements ToyInstance {
     // Tool
     toolSize: 1,
     toolHardness: 1,
+    pressureGain: 1,
+    dwellBite: 1,
     // Crumbs
     perFlake: 1.2,
     push: 0.85,
@@ -155,6 +166,8 @@ class ScratchOff implements ToyInstance {
     streak: 0.8,
     glitter: 1,
     lip: 3,
+    lift: 0.7,
+    curls: 0.45,
   };
 
   constructor(private ctx: ToyContext) {
@@ -337,6 +350,8 @@ class ScratchOff implements ToyInstance {
     panel.heading('Tool');
     panel.slider(c, 'toolSize', { label: 'Size', min: 0.4, max: 3, step: 0.05 });
     panel.slider(c, 'toolHardness', { label: 'Hardness', min: 0.2, max: 3, step: 0.05 });
+    panel.slider(c, 'pressureGain', { label: 'Pressure bite', min: 0, max: 2, step: 0.05 });
+    panel.slider(c, 'dwellBite', { label: 'Hold-still bite', min: 0, max: 3, step: 0.05 });
     panel.heading('Crumbs');
     panel.slider(c, 'perFlake', { label: 'Crumbs per flake', min: 0, max: 4, step: 0.1 });
     panel.slider(c, 'push', { label: 'Plough', min: 0, max: 1.5, step: 0.05 });
@@ -355,6 +370,8 @@ class ScratchOff implements ToyInstance {
     panel.slider(c, 'streak', { label: 'Brushed streaks', min: 0, max: 2, step: 0.05 });
     panel.slider(c, 'glitter', { label: 'Glitter', min: 0, max: 3, step: 0.05 });
     panel.slider(c, 'lip', { label: 'Coat thickness', min: 0, max: 8, step: 0.1 });
+    panel.slider(c, 'lift', { label: 'Flake lift', min: 0, max: 2, step: 0.05 });
+    panel.slider(c, 'curls', { label: 'Curled crumbs', min: 0, max: 1, step: 0.05 });
   }
 
   private toolShape(): ToolShape & ToolDef {
@@ -419,16 +436,18 @@ class ScratchOff implements ToyInstance {
             prev.ux = ux / l;
             prev.uy = uy / l;
           }
+          const press = this.pressOf(q.pressure, q.size, dt);
           const rb = Math.max(0.9, tool.r * (1 - tool.flat * 0.82));
           const steps = Math.max(1, Math.min(24, Math.ceil(d / (rb * 0.5))));
           const sp = d / Math.max(dt, 1e-3);
+          // Holding still (or crawling) keeps working the coat under the edge.
+          const dwell = this.cfg.dwellBite * dt * 7 * Math.exp(-sp / 50);
           const tvx = mx / Math.max(dt, 1e-3), tvy = my / Math.max(dt, 1e-3);
           let c = 0, b = 0;
           for (let k = 1; k <= steps; k++) {
             const x = prev.x + (mx * k) / steps, y = prev.y + (my * k) / steps;
-            // Pressing still bites a little too.
-            const dl = d / steps + (k === steps ? dt * 3 : 0);
-            this.coat.scrape(x, y, prev.ux, prev.uy, dl, tool, this.coatParams(), sp);
+            const dl = d / steps + dwell / steps;
+            this.coat.scrape(x, y, prev.ux, prev.uy, dl, tool, this.coatParams(), sp, press);
             c += this.coat.contact / steps;
             b += this.coat.bare / steps;
             this.crumbs.plough(x, y, prev.ux, prev.uy, tvx, tvy, tool.r, tool.flat, cp);
@@ -441,6 +460,14 @@ class ScratchOff implements ToyInstance {
           speed = Math.max(speed, sp);
           pan = (gx / this.GW) * 2 - 1;
           this.lightTo(q.x, q.y, dt);
+          const tv = this.toolView, P = this.pose;
+          tv.x = P.x + (gx / this.GW) * P.w;
+          tv.y = P.y + (gy / this.GH) * P.h;
+          tv.ux = prev.ux;
+          tv.uy = prev.uy;
+          tv.r = (tool.r / this.GW) * P.w;
+          tv.press = press;
+          tv.alpha = Math.min(1, tv.alpha + dt * 12);
           // Abrasion dust: fine crumbs shed off the back of the stroke.
           const dust = this.coat.abraded / 5;
           for (let n = Math.floor(dust + Math.random()); n > 0; n--)
@@ -450,7 +477,11 @@ class ScratchOff implements ToyInstance {
         for (const id of this.last.keys()) if (!this.seen.has(id)) this.last.delete(id);
       }
     }
-    if (!touching) this.lightTo(-1, -1, dt);
+    if (!touching) {
+      this.lightTo(-1, -1, dt);
+      this.toolView.alpha = Math.max(0, this.toolView.alpha - dt * 8);
+    }
+    this.toolView.kind = TOOL_VIEW[this.tool];
 
     // Breath into the mic clears crumbs from the middle of the card outwards.
     const breath = this.ctx.mic.blow;
@@ -486,9 +517,38 @@ class ScratchOff implements ToyInstance {
       win: this.card.cells.filter((c) => c.win).map((c) => [c.x0, c.y0, c.x1, c.y1]),
       winOn: this.winOn,
       crumbs: this.crumbs,
+      tool: this.toolView,
+      scale: this.ctx.pixelRatio,
     });
     this.flash *= Math.exp(-dt * 7);
-    this.ctx.setStatus(`${this.crumbs.count} crumbs · ${this.coat.goneFlakes}/${this.coat.flakes} flakes · sim ${this.simMs.toFixed(1)}ms`);
+    this.ctx.setStatus(`${this.crumbs.count} crumbs · ${this.coat.goneFlakes}/${this.coat.flakes} flakes · sim ${this.simMs.toFixed(1)}ms · press ${this.pressMode} ${this.press.toFixed(2)}`);
+  }
+
+  /**
+   * How hard the finger is pressing, ~0.5..1.6 (1 = normal). Uses force where the screen senses it,
+   * else the contact size (a pressed fingertip flattens), else 1. Either only counts once it has
+   * been seen to vary, since unsupported screens report a constant.
+   */
+  private pressOf(pressure: number, size: number, dt: number) {
+    const P = this.pRange, S = this.sRange;
+    P[0] = Math.min(P[0], pressure);
+    P[1] = Math.max(P[1], pressure);
+    if (size > 1) {
+      S[0] = Math.min(S[0], size);
+      S[1] = Math.max(S[1], size);
+    }
+    let raw = 1;
+    this.pressMode = 'hold';
+    if (P[1] - P[0] > 0.12) {
+      raw = 0.5 + pressure * 1.1;
+      this.pressMode = 'force';
+    } else if (S[1] - S[0] > 5) {
+      raw = 0.6 + ((size - S[0]) / (S[1] - S[0])) * 0.9;
+      this.pressMode = 'size';
+    }
+    const target = 1 + (raw - 1) * this.cfg.pressureGain;
+    this.press += (target - this.press) * Math.min(1, dt * 15);
+    return this.press;
   }
 
   /** The lamp's highlight follows the finger a little; idle, it drifts so the foil keeps shimmering. */
@@ -693,7 +753,9 @@ class ScratchOff implements ToyInstance {
     this.paperLvl += ((o.touching ? onPaper * this.speedS : 0) - this.paperLvl) * k;
     const breaks = this.phase === 'scratch' ? this.coat.breaks : 0;
     if (this.phase !== 'burst') {
-      this.scrape.set(this.scrapeLvl * cfg.scrapeGain, 30 + this.speedS * 260 * o.tool.rough, o.tool.freq * (0.85 + onCoat * 0.3), o.pan * 0.6);
+      // Pressing harder scrapes louder and a little lower.
+      const pr = this.press;
+      this.scrape.set(this.scrapeLvl * cfg.scrapeGain * (0.65 + 0.35 * pr), 30 + this.speedS * 260 * o.tool.rough, o.tool.freq * (0.85 + onCoat * 0.3) * (1.12 - 0.12 * pr), o.pan * 0.6);
       this.grit.set(Math.min(1, Math.max(0, breaks - 6) / 14) * cfg.grit, 0.85);
     } else this.scrape.set(0, 30, o.tool.freq);
     this.paper.set(this.paperLvl * 0.22 * cfg.scrapeGain, 0.55);
@@ -706,7 +768,7 @@ class ScratchOff implements ToyInstance {
     this.wasBlowing = o.blowing;
     if (o.touching && this.phase === 'scratch') {
       const level = (onCoat * Math.min(1, this.speedS) * 0.35 + Math.min(0.65, breaks * 0.07) + onPaper * this.speedS * 0.08) * cfg.hapticGain;
-      if (level > 0.02) ctx.hapticLevel(Math.min(1, level), o.tool.sharp);
+      if (level > 0.02) ctx.hapticLevel(Math.min(1, level * (0.7 + 0.3 * this.press)), o.tool.sharp);
     }
   }
 

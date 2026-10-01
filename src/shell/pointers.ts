@@ -11,6 +11,10 @@ export interface PointerState {
   justDown: boolean;
   /** Seconds the pointer has been held. */
   held: number;
+  /** Reported force 0..1 (0.5 on screens that can't sense it). */
+  pressure: number;
+  /** Contact diameter in CSS px as the screen reports it (1 for a mouse). */
+  size: number;
 }
 
 /**
@@ -28,7 +32,7 @@ export class Pointers {
     const down = (e: PointerEvent) => {
       el.setPointerCapture?.(e.pointerId);
       const [x, y] = this.uv(e);
-      this.active.set(e.pointerId, { id: e.pointerId, x, y, dx: 0, dy: 0, down: true, justDown: true, held: 0 });
+      this.active.set(e.pointerId, { id: e.pointerId, x, y, dx: 0, dy: 0, down: true, justDown: true, held: 0, pressure: e.pressure || 0.5, size: Math.max(e.width || 1, e.height || 1) });
     };
     const move = (e: PointerEvent) => {
       const p = this.active.get(e.pointerId);
@@ -40,6 +44,8 @@ export class Pointers {
       p.dy += y - p.y;
       p.x = x;
       p.y = y;
+      p.pressure = last.pressure || p.pressure;
+      p.size = Math.max(last.width || 1, last.height || 1);
     };
     const up = (e: PointerEvent) => {
       if (this.active.has(e.pointerId)) this.ups.push(e.pointerId);

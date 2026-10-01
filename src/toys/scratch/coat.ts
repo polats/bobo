@@ -42,7 +42,7 @@ export class Coat {
   readonly flake: Int32Array;
   /** Per-cell grain (0.5..1.5) so abrasion wears unevenly. */
   private readonly grain: Float32Array;
-  /** RG8 upload: thickness, flake damage. */
+  /** RGBA8 upload: thickness, flake damage, and the direction the tool has been pushing the flake. */
   readonly tex: Uint8Array;
   /** RGBA8 static: flake tilt x, tilt y, flake edge, adhesion. */
   readonly still: Uint8Array;
@@ -57,6 +57,9 @@ export class Coat {
   readonly fCy: Float32Array;
   private readonly fStrength: Float32Array;
   readonly fDamage: Float32Array;
+  /** Sum of push directions (weighted by load): a loosened flake lifts and tilts this way. */
+  private readonly fUx: Float32Array;
+  private readonly fUy: Float32Array;
   readonly fGone: Uint8Array;
   private readonly nStart: Int32Array;
   private readonly nList: Int32Array;
@@ -91,7 +94,7 @@ export class Coat {
     this.h = new Float32Array(n);
     this.flake = new Int32Array(n).fill(-1);
     this.grain = new Float32Array(n);
-    this.tex = new Uint8Array(n * 2);
+    this.tex = new Uint8Array(n * 4);
     this.still = new Uint8Array(n * 4);
     const rnd = mulberry(seed);
 
@@ -170,6 +173,8 @@ export class Coat {
     // Adhesion: fbm patches, so some regions resist.
     this.fStrength = new Float32Array(flakes);
     this.fDamage = new Float32Array(flakes);
+    this.fUx = new Float32Array(flakes);
+    this.fUy = new Float32Array(flakes);
     this.fGone = new Uint8Array(flakes);
     const tilt = new Uint8Array(flakes * 2);
     for (let f = 0; f < flakes; f++) {
@@ -236,12 +241,21 @@ export class Coat {
 
   /** Pack the dirty rows into the upload buffer; returns the row range, or null. */
   pack(): [number, number] | null {
-    const { dirty0: y0, dirty1: y1, W, h, flake, fDamage, fStrength, tex, k } = this;
+    const { dirty0: y0, dirty1: y1, W, h, flake, fDamage, fStrength, fUx, fUy, tex, k } = this;
     if (y1 <= y0) return null;
     for (let i = y0 * W; i < y1 * W; i++) {
       const f = flake[i];
-      tex[i * 2] = h[i] * 255;
-      tex[i * 2 + 1] = f >= 0 ? Math.min(255, (fDamage[f] / (fStrength[f] * k)) * 255) : 0;
+      const o = i * 4;
+      tex[o] = h[i] * 255;
+      if (f < 0) {
+        tex[o + 1] = 0;
+        tex[o + 2] = tex[o + 3] = 128;
+        continue;
+      }
+      tex[o + 1] = Math.min(255, (fDamage[f] / (fStrength[f] * k)) * 255);
+      const l = Math.hypot(fUx[f], fUy[f]) || 1;
+      tex[o + 2] = 128 + (fUx[f] / l) * 127;
+      tex[o + 3] = 128 + (fUy[f] / l) * 127;
     }
     this.dirty0 = this.dirty1 = 0;
     return [y0, y1];
@@ -256,7 +270,7 @@ export class Coat {
    * One substep of a tool dragged by (dx, dy) cells to (x, y). `ux, uy` is the stroke direction;
    * the contact is a superellipse that goes from a disc (flat 0) to a thin edge across the stroke.
    */
-  scrape(x: number, y: number, ux: number, uy: number, dl: number, t: ToolShape, p: CoatParams, speed: number) {
+  scrape(x: number, y: number, ux: number, uy: number, dl: number, t: ToolShape, p: CoatParams, speed: number, press = 1) {
     const { W, H, h, flake, grain, acc, touched } = this;
     const r = t.r;
     const rb = Math.max(0.9, r * (1 - t.flat * 0.82));
@@ -264,8 +278,8 @@ export class Coat {
     const reach = Math.ceil(Math.max(r, rb)) + 1;
     const x0 = Math.max(0, Math.floor(x - reach)), x1 = Math.min(W - 1, Math.ceil(x + reach));
     const y0 = Math.max(0, Math.floor(y - reach)), y1 = Math.min(H - 1, Math.ceil(y + reach));
-    const wear = (dl * t.abrasion * 0.07) / Math.max(0.05, p.abrasionResist);
-    const load = dl * t.hardness * 0.45 * (1 + p.speedGain * Math.min(2, speed / 220));
+    const wear = (dl * t.abrasion * 0.07 * press) / Math.max(0.05, p.abrasionResist);
+    const load = dl * t.hardness * 0.45 * press * (1 + p.speedGain * Math.min(2, speed / 220));
     let contact = 0, bare = 0, nt = this.nTouched;
     for (let yy = y0; yy <= y1; yy++) {
       for (let xx = x0; xx <= x1; xx++) {
@@ -288,7 +302,10 @@ export class Coat {
         this.abraded += a;
         if (this.fGone[f]) continue;
         if (acc[f] === 0) touched[nt++] = f;
-        acc[f] += w * (hc - a) * load;
+        const l = w * (hc - a) * load;
+        acc[f] += l;
+        this.fUx[f] += ux * l;
+        this.fUy[f] += uy * l;
       }
     }
     this.nTouched = nt;

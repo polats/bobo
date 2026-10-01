@@ -50,27 +50,44 @@ One `ScratchParams` object holds everything, and every field is a Tune slider. A
 - **Reveal:** symbol threshold, auto-finish %
 - **Look:** sheen, streaks, glitter, lip height
 
-## 5. The idle layer (opt-in, later phases)
+## 5. The idle layer: upgrades change the scratch
 
-- **Loop:** coins → buy a card → scratch → cash out → upgrade → better cards.
-- **Upgrades:** tools (nail → coin → key → scraper), width, luck, blower, card feeder, and an **auto-scratcher**: a visible hand that scratches through the same sim, so idle cards still crumble and click.
-- **Hand scratching keeps its own rewards:** "lucky flakes" that only a finger dislodges, streaks for one long stroke, premium cards bots can't handle.
-- **Maths:**
-  - costs `base · 1.15^n` with ×2 at milestones
-  - each card tier pays 0.9–1.2× its price
-  - prestige grows with the cube root of lifetime earnings
-  - offline time capped at 2–8 h, paid as **a stack of unscratched cards**
-- A headless economy simulator (`tools/`) balances the curves before any UI is built.
-- **Fair-play rules:** odds and expected value are shown on every card, outcomes are fixed when you buy the card, near-misses pay shards towards a pity reward, and there is no debt.
-- **Saving:** versioned JSON in `bobo.scratch.save`.
+The meta exists to change the scratching. Currency only pays for upgrades. Every upgrade is a new tool, coat or behaviour that you can see, hear or feel under your finger.
+
+**How it works.** The effective settings are layered: the Tune base, then the card's coat, then the owned upgrades. An upgrade is data: the settings it changes, plus any behaviour flags it switches on.
+- The Tune panel has a **meta off** switch, so the raw scratch can be judged (the audit rule).
+- Each upgrade has its own A/B toggle, so you can feel the difference while scratching.
+- **Rule:** an upgrade that only changes a number is not allowed.
+- Free mode keeps every tool and coat. Idle mode is opt-in and starts you at the bottom of each track.
+
+| Track | Early → late | What changes in the scratch |
+|---|---|---|
+| **Tool** | nail → penny → quarter → key → scraper → sander | Contact shape, hardness and edge; the visible tool, the scrape pitch and the sharpness of the buzz. Sub-upgrades: **milled edge** (coarser grit, more cracking), **sharpened** (cleaner pops, fewer worn patches). |
+| **Technique** | heavy hand → flick → steady hand | Bite from pressure or from holding still, bite from speed, clean edges on long strokes. |
+| **Coat** (comes with better cards) | sticky budget latex → standard silver → crackle coat → gold leaf → scratch-art wax → holo | Better cards are more satisfying to scratch: budget latex smears and resists, crackle coat shatters off in clumps, wax ploughs into curls. |
+| **Crumbs** | none → cling → sweep → collect | Crumbs build up on the tool's edge and drop off in clumps; a brush stroke sweeps them; crumbs swept off the card edge pay a **silver dust bonus** on top of the card's prize (not a separate currency for now). |
+| **Streaks** | off → combo → crit flakes | Long strokes chain pops into a streak with a rising pitch ladder; **lucky flakes** (gold, hidden in the coat) pop only for a hand. These keep hand play worth more than automation. |
+| **Automation** | none → zigzag → spiral → smart | A visible hand drags a coin through the same sim, and its path gets better as it's upgraded. Premium coats and lucky flakes still want your finger. |
+
+**The coin jar.** The merge win and coin jar are parked on the `scratch-jar` branch. They return as the bank, the place your coins visibly go.
+
+**Maths and fair play** (for the economy step):
+- costs `base · 1.15^n` with ×2 at milestones
+- each card tier pays 0.9–1.2× its price
+- prestige grows with the cube root of lifetime earnings
+- offline time capped at 2–8 h, paid as **a stack of unscratched cards**
+- odds and expected value are shown on every card, outcomes are fixed when you buy the card, near-misses pay shards, and there is no debt
+- a headless simulator in `tools/` balances the curves against how strong each upgrade feels
+- saving is versioned JSON in `bobo.scratch.save`
 
 ## 6. Phases
 
-1. **Feel prototype.** Silver coat, flakes, crumbs, blowing, four tools, a classic match-3 card underneath, the full Tune panel. *Gate:* 60 fps on an iPhone 13 mini, and the feel is signed off.
-2. **Payoff.** Per-symbol pings, the merge win, auto-finish, coins into the jar.
-3. **Card types and coats.** Gold leaf, scratch-art wax curls, holo.
-4. **Economy.** Simulator, upgrades as param modifiers, saving, offline card stack.
-5. **Automation.** Auto-scratcher, feeder, lucky flakes.
-6. **Polish.** Hub preview, README, catalog.
+1. **Feel prototype** (done). Silver coat, flakes, crumbs, blowing, four tools, a match-3 card, the full Tune panel. 60 fps on an iPhone 13 mini.
+2. **Scratch feel** (now). A visible tool held at the stroke's angle; flakes that lift and curl before they pop; crumbs that roll into curls; pressure, contact size or holding still biting deeper. Each piece is a setting from the start, so upgrades can change it. Soak and tune on both phones.
+3. **Upgrade layer.** The base → coat → upgrades stack, meta off, A/B toggles, and the Tool and Technique tracks.
+4. **Coats.** Crackle coat, gold leaf and scratch-art wax as card tiers.
+5. **Crumbs and streaks.** Cling, sweep, the silver dust bonus, the combo ladder, lucky flakes.
+6. **Economy.** Prices, the balancing simulator, saving, the offline card stack, the jar as the bank.
+7. **Automation.** The robot hand.
 
-**Budgets (iPhone 13 mini, est.)** CPU sim ≤ 2 ms, GPU ≤ 4 ms. The coat grid is about 260 × 420 cells, uploaded only in dirty rows. Crumbs are capped at 2,500 in a pooled buffer and drawn in one `POINTS` call.
+**Budgets (iPhone 13 mini, est.)** CPU sim ≤ 2 ms, GPU ≤ 4 ms. The coat grid is about 260 × 420 cells, uploaded only in dirty rows. Crumbs are capped at 2,600 in a pooled buffer and drawn in one `POINTS` call.
