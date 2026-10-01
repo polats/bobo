@@ -64,7 +64,9 @@ void main() {
 const cardFrag = `#version 300 es
 precision highp float;
 in vec2 vUv;
-uniform sampler2D uArt, uPrint, uCoat, uStill;
+uniform sampler2D uArt, uPrint, uCoat, uStill, uBase;
+uniform float uHasBase;
+uniform vec3 uBaseCol;
 uniform vec2 uGrid;
 uniform vec2 uPx;
 uniform vec3 uLight;   // card uv x, y and height in card widths
@@ -119,6 +121,21 @@ void main() {
   float hs = texture(uCoat, vUv + toL).r * 1.25;
   paper *= 1.0 - 0.38 * smoothstep(0.3, 0.7, hs) * (1.0 - a);
   paper *= 1.0 + dot(-dentG, normalize(L.xy + 1e-4)) * 0.5 - dent * 0.06;
+  if (uHasBase > 0.5) {
+    // The tacky base under the skin: soft gum with a wet sheen that sinks a step each pass, and
+    // smudges where it has been dragged across bare card.
+    vec4 bs = texture(uBase, vUv);
+    float hb = bs.r * 1.25, db = bs.g;
+    float fwb = fwidth(hb) + 0.03;
+    float ab = smoothstep(e - fwb, e + fwb, hb);
+    float bx = texture(uBase, vUv + vec2(tx.x, 0.0)).r - texture(uBase, vUv - vec2(tx.x, 0.0)).r;
+    float by = texture(uBase, vUv + vec2(0.0, tx.y)).r - texture(uBase, vUv - vec2(0.0, tx.y)).r;
+    vec3 nb = normalize(vec3(-bx * 3.0 + dentG.x, -by * 3.0 + dentG.y, 1.0));
+    float wet = pow(max(dot(nb, H), 0.0), 50.0) * 0.35;
+    vec3 gum = uBaseCol * (0.72 + 0.28 * max(dot(nb, L), 0.0)) * (0.7 + 0.3 * smoothstep(0.45, 1.0, hb)) * (1.0 - 0.25 * smoothstep(0.3, 1.0, db)) + wet;
+    paper = mix(paper, uBaseCol * 0.85, smoothstep(0.02, 0.3, hb) * (1.0 - ab) * 0.7);
+    paper = mix(paper, gum, ab);
+  }
   float res = smoothstep(0.04, e, h) * (1.0 - a);
   if (uMode == 2) {
     // Rubbery latex leaves smooth grey smudges, not speckle.
@@ -208,6 +225,7 @@ in float vRot, vShade, vAlpha, vSeed;
 uniform float uShadow;
 uniform float uCurl;
 uniform int uMode;
+uniform vec3 uBaseCol;
 // CIE 1931 observer (Wyman, Sloan & Shirley's lobes, as in Bubble Wand) to linear sRGB, for one wavelength in nm.
 float lobe(float l, float a, float m, float g, float d) { float t = (l - m) * (l < m ? g : d); return a * exp(-0.5 * t * t); }
 vec3 spectral(float l) {
@@ -223,7 +241,12 @@ void main() {
   vec2 q = gl_PointCoord * 2.0 - 1.0;
   float s = sin(vRot), c = cos(vRot);
   q = vec2(q.x * c - q.y * s, q.x * s + q.y * c);
-  if (fract(vSeed * 13.7) < uCurl) {
+  // Crumbs of the tacky base carry +2 on their shade: gum-coloured eraser rolls.
+  bool gumC = vShade > 1.5;
+  float shade = gumC ? vShade - 2.0 : vShade;
+  vec3 foilC = gumC ? uBaseCol : uFoil;
+  int mode = gumC ? 2 : uMode;
+  if (gumC || fract(vSeed * 13.7) < uCurl) {
     // A rolled curl: a little cylinder of coat, foil outside, grey latex showing in the spiral at its ends.
     float d = length(vec2(max(abs(q.x) - 0.5, 0.0), q.y)) - 0.36;
     if (d > 0.0) discard;
@@ -236,15 +259,15 @@ void main() {
     float sp = pow(max(dot(n, normalize(uLightDir + vec3(0, 0, 1))), 0.0), 24.0);
     float endR = length(vec2(abs(q.x) - 0.5, q.y));
     float spiral = (abs(q.x) > 0.5) ? 0.5 + 0.5 * sin(endR * 55.0 + atan(q.y, abs(q.x) - 0.5)) : 0.0;
-    vec3 skin = uMode == 3 ? spectral(420.0 + fract(vSeed * 7.1 + dot(n.xy, uLightDir.xy)) * 260.0) * 0.8 + uFoil * 0.3 : uFoil;
-    vec3 col = mix(skin * diff * vShade + sp * 0.7, vec3(0.38, 0.38, 0.4) * diff, spiral * (uMode == 2 ? 0.3 : 0.75));
+    vec3 skin = mode == 3 ? spectral(420.0 + fract(vSeed * 7.1 + dot(n.xy, uLightDir.xy)) * 260.0) * 0.8 + foilC * 0.3 : foilC;
+    vec3 col = mix(skin * diff * shade + sp * 0.7, vec3(0.38, 0.38, 0.4) * diff, spiral * (mode == 2 ? 0.3 : 0.75));
     o = vec4(col * aa * vAlpha, aa * vAlpha);
     return;
   }
   q.y /= 0.62;
   float th = atan(q.y, q.x);
   float r = 0.78 + 0.13 * sin(3.0 * th + vSeed * 6.28) + 0.08 * sin(5.0 * th + vSeed * 17.0);
-  if (uMode == 1) {
+  if (mode == 1) {
     // Lacquer shards: straight-edged triangles and slivers.
     float k = floor(3.0 + fract(vSeed * 5.3) * 2.0);
     float seg = 6.28318 / k;
@@ -259,9 +282,9 @@ void main() {
   vec3 n = normalize(vec3(q * 0.9 + (vec2(fract(vSeed * 7.3), fract(vSeed * 3.1)) - 0.5) * 0.8, 1.0 - l * 0.6));
   float d = 0.45 + 0.55 * max(dot(n, uLightDir), 0.0);
   float sp = pow(max(dot(n, normalize(uLightDir + vec3(0, 0, 1))), 0.0), 40.0);
-  vec3 skin = uMode == 3 ? spectral(420.0 + fract(vSeed * 7.1 + dot(n.xy, uLightDir.xy)) * 260.0) * 0.8 + uFoil * 0.3 : uFoil;
-  float rim = uMode == 1 ? 0.15 : 0.7;
-  vec3 col = mix(skin * d * vShade, vec3(0.42, 0.42, 0.44) * d, smoothstep(0.55, 1.0, l) * rim) + sp * (uMode == 1 ? 1.4 : 0.8);
+  vec3 skin = mode == 3 ? spectral(420.0 + fract(vSeed * 7.1 + dot(n.xy, uLightDir.xy)) * 260.0) * 0.8 + foilC * 0.3 : foilC;
+  float rim = mode == 1 ? 0.15 : 0.7;
+  vec3 col = mix(skin * d * shade, vec3(0.42, 0.42, 0.44) * d, smoothstep(0.55, 1.0, l) * rim) + sp * (mode == 1 ? 1.4 : 0.8);
   o = vec4(col * aa * vAlpha, aa * vAlpha);
 }`;
 
@@ -415,6 +438,8 @@ export class ScratchRenderer {
   private print: WebGLTexture;
   private coatTex: WebGLTexture;
   private still: WebGLTexture;
+  private baseTex: WebGLTexture;
+  private hasBase = false;
   private grid: [number, number] = [1, 1];
 
   constructor(private gl: WebGL2RenderingContext) {
@@ -452,10 +477,11 @@ export class ScratchRenderer {
     this.print = tex();
     this.coatTex = tex();
     this.still = tex();
+    this.baseTex = tex();
   }
 
   /** Upload a new card: printed ticket, coat print and the coat itself. */
-  setCard(art: HTMLCanvasElement, print: HTMLCanvasElement, coat: Coat) {
+  setCard(art: HTMLCanvasElement, print: HTMLCanvasElement, coat: Coat, base: Coat | null) {
     const gl = this.gl;
     for (const [t, cv] of [[this.art, art], [this.print, print]] as const) {
       gl.bindTexture(gl.TEXTURE_2D, t);
@@ -476,6 +502,13 @@ export class ScratchRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.still);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, coat.W, coat.H, 0, gl.RGBA, gl.UNSIGNED_BYTE, coat.still);
     this.params(gl.NEAREST);
+    this.hasBase = !!base;
+    gl.bindTexture(gl.TEXTURE_2D, this.baseTex);
+    if (base) {
+      base.pack();
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, base.W, base.H, 0, gl.RGBA, gl.UNSIGNED_BYTE, base.tex);
+    } else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+    this.params(gl.LINEAR);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
   }
 
@@ -488,12 +521,17 @@ export class ScratchRenderer {
   }
 
   /** Upload the coat rows that changed. */
-  update(coat: Coat) {
+  update(coat: Coat, base: Coat | null) {
+    if (base) this.upload(base, this.baseTex);
+    this.upload(coat, this.coatTex);
+  }
+
+  private upload(coat: Coat, tex: WebGLTexture) {
     const rows = coat.pack();
     if (!rows) return;
     const gl = this.gl;
     const [y0, y1] = rows;
-    gl.bindTexture(gl.TEXTURE_2D, this.coatTex);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y0, coat.W, y1 - y0, gl.RGBA, gl.UNSIGNED_BYTE, coat.tex.subarray(y0 * coat.W * 4, y1 * coat.W * 4));
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
@@ -517,6 +555,7 @@ export class ScratchRenderer {
     dent: [number, number, number];
     /** Coat look (see CoatDef.mode). */
     mode: number;
+    baseColour: [number, number, number];
   }) {
     const gl = this.gl;
     const { pose: c } = o;
@@ -558,7 +597,9 @@ export class ScratchRenderer {
     gl.uniform1f(u.uWinOn, o.winOn);
     gl.uniform3f(u.uDent, ...o.dent);
     gl.uniform1i(u.uMode, o.mode);
-    const units: [string, WebGLTexture][] = [['uArt', this.art], ['uPrint', this.print], ['uCoat', this.coatTex], ['uStill', this.still]];
+    gl.uniform1f(u.uHasBase, this.hasBase ? 1 : 0);
+    gl.uniform3f(u.uBaseCol, ...o.baseColour);
+    const units: [string, WebGLTexture][] = [['uArt', this.art], ['uPrint', this.print], ['uCoat', this.coatTex], ['uStill', this.still], ['uBase', this.baseTex]];
     units.forEach(([name, t], i) => {
       gl.activeTexture(gl.TEXTURE0 + i);
       gl.bindTexture(gl.TEXTURE_2D, t);
@@ -592,6 +633,7 @@ export class ScratchRenderer {
       gl.uniform3f(u.uFoil, ...o.foil);
       gl.uniform1f(u.uCurl, o.look.curls);
       gl.uniform1i(u.uMode, o.mode);
+      gl.uniform3f(u.uBaseCol, ...o.baseColour);
       const lx = o.light[0] - 0.5, ly = o.light[1] - 0.5;
       const ll = Math.hypot(lx, ly) + 1e-3;
       const L = [lx, ly, o.light[2]];
@@ -628,7 +670,7 @@ export class ScratchRenderer {
 
   destroy() {
     const gl = this.gl;
-    for (const t of [this.art, this.print, this.coatTex, this.still]) gl.deleteTexture(t);
+    for (const t of [this.art, this.print, this.coatTex, this.still, this.baseTex]) gl.deleteTexture(t);
     gl.deleteBuffer(this.crumbBuf);
   }
 }

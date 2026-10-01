@@ -87,7 +87,7 @@ The meta exists to change the scratching. Currency only pays for upgrades. Every
 3. **Coats** (moved ahead of the upgrade layer: the biggest change you can see and feel, and the content upgrades need). *First pass built* (`coats.ts`): each coat bundles its sim settings, look, sound and crumb behaviour; each card design has its own, and Tune's Material choice puts any coat on any card.
    - **Silver:** the phase 1 coat.
    - **Crackle:** a dark lacquer crazed with pale lines; big plates, cracks that run a couple of flakes into untouched coat, straight-edged shards, glassy ticks (`impact('glass')`).
-   - **Budget latex:** matte rubber that barely pops; it wears and smears ahead of the edge into grey smudges and ridges, rolls into eraser curls, squeaks low and buzzes soft.
+   - **Budget latex:** two layers. A grey skin that scuffs and smears ahead of the edge into smudges and ridges sits over a tacky gum base (its own flake pattern). The gum takes one bite per pass (a new touch, a reversal, or a scrub coming round), greying and sinking each time, and lets go on its second, so a clean patch takes three strokes. On the gum the scrape drops into a squeak and the buzz softens; each bite is a soft tacky tick and the final release a fuller snap. Gum crumbs roll into tan eraser curls. Any coat can have the base (Tune: Layers).
    - **Holo:** a foil embossed with concentric grating rings; colour from the grating equation (first and second orders, CIE observer) that sweeps round as the lamp moves; rainbow crumbs.
    - **Next:** gold leaf (tearing, fluttering leaf), then scratch-art wax (a continuous curling shaving ribbon).
 4. **Upgrade layer.** The base → coat → upgrades stack, meta off, A/B toggles, and the Tool and Technique tracks.

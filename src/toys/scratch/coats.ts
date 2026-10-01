@@ -19,7 +19,12 @@ export interface CoatDef {
   sharp: number;
   /** Chance a pop also rings like glass (crackle's shards). */
   glassy: number;
+  /** A second, tacky layer under the top skin, with its own colour and sound (set `layers: 2`). */
+  base?: { colour: [number, number, number]; pitch: number; rate: number; sharp: number };
 }
+
+/** Settings for coats without a base layer (the base sliders still need values). */
+const NO_BASE = { layers: 1, basePasses: 3, baseFlakeSize: 2.5, baseStrength: 1, baseSmear: 0.2 };
 
 export const COATS: Record<CoatId, CoatDef> = {
   // Latex and aluminium pigment over a release varnish: brittle flakes and dusty crumbs.
@@ -30,7 +35,7 @@ export const COATS: Record<CoatId, CoatDef> = {
     colour: [0.78, 0.79, 0.82],
     set: {
       flakeSize: 4.5, flakeSpread: 0.55, strength: 1, adhesionNoise: 0.6, brittleness: 0.35, abrasionResist: 1, speedGain: 0.4,
-      crackReach: 0.2, chainDepth: 6, smear: 0,
+      crackReach: 0.2, chainDepth: 6, smear: 0, passes: 0, ...NO_BASE,
       perFlake: 1.2, friction: 9, curls: 0.45,
       sheen: 1, streak: 0.8, glitter: 1, lip: 3, lift: 0.7,
     },
@@ -49,7 +54,7 @@ export const COATS: Record<CoatId, CoatDef> = {
     colour: [0.1, 0.12, 0.2],
     set: {
       flakeSize: 8, flakeSpread: 0.75, strength: 0.8, adhesionNoise: 0.35, brittleness: 0.45, abrasionResist: 4, speedGain: 0.7,
-      crackReach: 0.05, chainDepth: 2, smear: 0,
+      crackReach: 0.05, chainDepth: 2, smear: 0, passes: 0, ...NO_BASE,
       perFlake: 2.2, friction: 7, curls: 0,
       sheen: 1.6, streak: 0, glitter: 0.6, lip: 4.5, lift: 1.1,
     },
@@ -59,16 +64,17 @@ export const COATS: Record<CoatId, CoatDef> = {
     sharp: 1.2,
     glassy: 0.35,
   },
-  // Cheap, rubbery latex: it barely pops, it wears and smears ahead of the edge, and rolls into grey
-  // eraser crumbs.
+  // Cheap latex in two layers: a thin grey skin that scuffs and smears off, over a tacky gum that
+  // takes one bite per pass (each pass greys and sinks it) and lets go on the second: three strokes in all.
   latex: {
     id: 'latex',
     label: 'Budget latex',
     mode: 2,
     colour: [0.55, 0.56, 0.58],
     set: {
-      flakeSize: 3, flakeSpread: 0.3, strength: 2.6, adhesionNoise: 0.4, brittleness: 0, abrasionResist: 0.55, speedGain: 0.1,
-      crackReach: 0.2, chainDepth: 0, smear: 0.45,
+      flakeSize: 3, flakeSpread: 0.3, strength: 1.6, adhesionNoise: 0.4, brittleness: 0, abrasionResist: 0.55, speedGain: 0.1,
+      crackReach: 0.2, chainDepth: 0, smear: 0.45, passes: 0,
+      layers: 2, basePasses: 2, baseFlakeSize: 2.5, baseStrength: 1, baseSmear: 0.25,
       perFlake: 0.6, friction: 18, curls: 1,
       sheen: 0.15, streak: 0, glitter: 0, lip: 4, lift: 0.4,
     },
@@ -77,6 +83,7 @@ export const COATS: Record<CoatId, CoatDef> = {
     stiffness: 0.15,
     sharp: 0.35,
     glassy: 0,
+    base: { colour: [0.62, 0.56, 0.46], pitch: 0.3, rate: 2.4, sharp: 0.2 },
   },
   // A thin foil embossed with a diffraction grating: scratches clean, and every scrap of it splits the
   // lamp into a spectrum that shifts as the light moves.
@@ -87,7 +94,7 @@ export const COATS: Record<CoatId, CoatDef> = {
     colour: [0.82, 0.84, 0.88],
     set: {
       flakeSize: 3.5, flakeSpread: 0.4, strength: 0.8, adhesionNoise: 0.4, brittleness: 0.2, abrasionResist: 1.6, speedGain: 0.4,
-      crackReach: 0.2, chainDepth: 4, smear: 0,
+      crackReach: 0.2, chainDepth: 4, smear: 0, passes: 0, ...NO_BASE,
       perFlake: 1, friction: 9, curls: 0.6,
       sheen: 1.2, streak: 0.4, glitter: 1.4, lip: 2, lift: 0.6,
     },

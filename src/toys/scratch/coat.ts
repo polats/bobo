@@ -29,6 +29,11 @@ export interface CoatParams {
   chainDepth: number;
   /** Share of worn coat that's shoved ahead of the tool instead of crumbling (rubbery latex smears). */
   smear: number;
+  /**
+   * Sticky coat: 0 = flakes give way to accumulated load. N > 0 = each flake takes one bite per pass
+   * (a new touch, a reversal, or a full turn of a scrub), thinning each time, and lets go on the Nth.
+   */
+  passes: number;
 }
 
 export interface ToolShape {
@@ -89,6 +94,15 @@ export class Coat {
   readonly bStrength = new Float32Array(MAX_BREAKS);
   /** 1 for a flake that cracked off a neighbour rather than under the tool. */
   readonly bChain = new Uint8Array(MAX_BREAKS);
+  /** 1 for a sticky flake letting go on its last pass. */
+  readonly bLast = new Uint8Array(MAX_BREAKS);
+  /** Bites taken out of sticky flakes this frame (each pass that wore one down). */
+  bites = 0;
+  /** Current pass: one bite per flake per pass. */
+  private pass = 1;
+  private readonly fSeen: Int32Array;
+  private readonly fWork: Float32Array;
+  private readonly fBites: Uint8Array;
   breaks = 0;
   /** Coat worn away by abrasion since the last clearEvents (cells' worth). */
   abraded = 0;
@@ -243,6 +257,9 @@ export class Coat {
     this.touched = new Int32Array(flakes);
     this.queue = new Int32Array(flakes);
     this.depth = new Uint8Array(flakes);
+    this.fSeen = new Int32Array(flakes);
+    this.fWork = new Float32Array(flakes);
+    this.fBites = new Uint8Array(flakes);
     this.markDirty(0, H);
   }
 
@@ -282,7 +299,13 @@ export class Coat {
     return [y0, y1];
   }
 
+  /** A new pass: every sticky flake can take one more bite. */
+  newPass() {
+    this.pass++;
+  }
+
   clearEvents() {
+    this.bites = 0;
     this.breaks = 0;
     this.abraded = 0;
     this.crossings = 0;
@@ -297,7 +320,8 @@ export class Coat {
    * One substep of a tool dragged by (dx, dy) cells to (x, y). `ux, uy` is the stroke direction;
    * the contact is a superellipse that goes from a disc (flat 0) to a thin edge across the stroke.
    */
-  scrape(x: number, y: number, ux: number, uy: number, dl: number, t: ToolShape, p: CoatParams, speed: number, press = 1) {
+  /** `cover`: a layer on top of this one; cells still under it (thicker than 0.35) are out of reach. */
+  scrape(x: number, y: number, ux: number, uy: number, dl: number, t: ToolShape, p: CoatParams, speed: number, press = 1, cover?: Float32Array) {
     const { W, H, h, flake, grain, acc, touched } = this;
     const r = t.r;
     const rb = Math.max(0.9, r * (1 - t.flat * 0.82));
@@ -317,6 +341,7 @@ export class Coat {
         if (d >= 1) continue;
         const w = t.flat > 0.5 ? Math.min(1, (1 - d) * 5) : 1 - d * d;
         const c = yy * W + xx;
+        if (cover && cover[c] > 0.35) continue;
         const f = flake[c];
         const hc = h[c];
         if (f < 0 || hc <= 0 || this.fGone[f]) {
@@ -377,6 +402,23 @@ export class Coat {
     let qn = 0;
     for (let i = 0; i < this.nTouched; i++) {
       const f = touched[i];
+      if (p.passes > 0) {
+        // Sticky: work done this pass only counts once; enough of it takes one bite.
+        if (this.fSeen[f] !== this.pass) this.fWork[f] += acc[f] / fArea[f];
+        acc[f] = 0;
+        if (fGone[f] || this.fSeen[f] === this.pass || this.fWork[f] < 0.6 * fStrength[f] * k) continue;
+        this.fSeen[f] = this.pass;
+        this.fWork[f] = 0;
+        const b = ++this.fBites[f];
+        this.bites++;
+        fDamage[f] = (fStrength[f] * k * Math.min(b, p.passes - 0.001)) / p.passes;
+        if (b >= p.passes) {
+          fGone[f] = 4;
+          this.depth[f] = 0;
+          this.queue[qn++] = f;
+        } else this.thin(f, 1 - (0.45 * b) / p.passes);
+        continue;
+      }
       fDamage[f] += acc[f] / fArea[f];
       acc[f] = 0;
       if (!fGone[f] && fDamage[f] >= fStrength[f] * k) {
@@ -390,7 +432,7 @@ export class Coat {
     let qi = 0;
     while (qi < qn) {
       const f = this.queue[qi++];
-      this.pop(f, fGone[f] === 3);
+      this.pop(f, fGone[f] === 3, fGone[f] === 4);
       if (p.brittleness <= 0 || qi > 600 || this.depth[f] >= p.chainDepth) continue;
       for (let j = this.nStart[f]; j < this.nStart[f + 1]; j++) {
         const g = this.nList[j];
@@ -405,8 +447,19 @@ export class Coat {
     }
   }
 
+  /** A sticky flake worn down a pass: its cells thin to at most `to` (they grey and sink). */
+  private thin(f: number, to: number) {
+    const { fCells, h } = this;
+    for (let k = this.fStart[f]; k < this.fStart[f + 1]; k++) {
+      const c = fCells[k];
+      if (h[c] > to) h[c] = to;
+    }
+    const y = this.fCy[f];
+    this.markDirty(y - Math.sqrt(this.fArea[f]) - 2, y + Math.sqrt(this.fArea[f]) + 2);
+  }
+
   /** Pop a flake right away (finishing the card, or a chain). */
-  pop(f: number, chain = false) {
+  pop(f: number, chain = false, last = false) {
     const { fCells, h, W } = this;
     let mass = 0;
     let ymin = this.H, ymax = 0;
@@ -429,18 +482,20 @@ export class Coat {
     this.bArea[b] = mass;
     this.bStrength[b] = this.fStrength[f];
     this.bChain[b] = chain ? 1 : 0;
+    this.bLast[b] = last ? 1 : 0;
   }
 
   /** Share of coat cells in the box [x0,x1)×[y0,y1) worn below `edge`; samples every other cell. */
-  revealed(x0: number, y0: number, x1: number, y1: number, edge = 0.4) {
+  revealed(x0: number, y0: number, x1: number, y1: number, edge = 0.4, under?: Coat | null) {
     const { W, h, flake } = this;
+    const hu = under?.h;
     let n = 0, open = 0;
     for (let y = Math.max(0, y0 | 0); y < Math.min(this.H, y1); y += 2)
       for (let x = Math.max(0, x0 | 0); x < Math.min(W, x1); x += 2) {
         const c = y * W + x;
         if (flake[c] < 0) continue;
         n++;
-        if (h[c] < edge) open++;
+        if (h[c] < edge && (!hu || hu[c] < edge)) open++;
       }
     return n ? open / n : 1;
   }
