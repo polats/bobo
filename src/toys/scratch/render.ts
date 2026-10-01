@@ -17,6 +17,7 @@ uniform vec4 uCard;   // x, y, w, h in px, y down
 uniform float uRadius;
 uniform vec2 uLamp;   // px
 uniform float uLift;
+uniform float uPress;
 out vec4 o;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -38,9 +39,9 @@ void main() {
   float d = length((p - uLamp) / uRes.y);
   vec3 col = wood * (0.25 + 1.25 * exp(-d * d * 3.2)) + vec3(0.06, 0.035, 0.01) * exp(-d * d * 8.0);
   // Card shadow, softer and further when the card is lifted.
-  vec2 c = uCard.xy + uCard.zw * 0.5 + vec2(0.0, uCard.w * (0.018 + uLift * 0.03));
+  vec2 c = uCard.xy + uCard.zw * 0.5 + vec2(0.0, uCard.w * (0.018 + uLift * 0.03 - uPress * 0.008));
   float sd = sdBox(p - c, uCard.zw * 0.5, uRadius);
-  float blur = uCard.z * (0.035 + uLift * 0.05);
+  float blur = uCard.z * (0.035 + uLift * 0.05 - uPress * 0.012);
   col *= 1.0 - 0.6 * (1.0 - smoothstep(-blur, blur, sd));
   o = vec4(col, 1.0);
 }`;
@@ -71,6 +72,7 @@ uniform vec3 uFoil;
 uniform float uSheen, uStreak, uGlitter, uLip, uLift, uTime, uFlash, uRadius;
 uniform vec4 uWin[3];
 uniform float uWinOn;
+uniform vec3 uDent;    // where the finger presses (card px) and how hard (0..1)
 out vec4 o;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float sdBox(vec2 p, vec2 b, float r) { vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
@@ -90,6 +92,11 @@ void main() {
   vec4 st = texture(uStill, vUv);
   float hx = height(vUv + vec2(tx.x, 0.0)) - height(vUv - vec2(tx.x, 0.0));
   float hy = height(vUv + vec2(0.0, tx.y)) - height(vUv - vec2(0.0, tx.y));
+  // The ticket gives a little under the finger: a shallow dent that shades the paper and the coat.
+  vec2 dd = px - uDent.xy;
+  float sig = uPx.x * 0.16;
+  float dent = uDent.z * exp(-dot(dd, dd) / (sig * sig));
+  vec2 dentG = -2.0 * dd / (sig * sig) * dent * uPx.x * 0.02;
   vec3 lp = vec3(uLight.xy * uPx, uLight.z * uPx.x);
   vec3 L = normalize(lp - vec3(px, 0.0));
   vec3 V = vec3(0.0, 0.0, 1.0);
@@ -102,6 +109,7 @@ void main() {
   vec2 toL = normalize(L.xy + 1e-4) * tx * 1.8;
   float hs = texture(uCoat, vUv + toL).r;
   paper *= 1.0 - 0.38 * smoothstep(0.3, 0.7, hs) * (1.0 - a);
+  paper *= 1.0 + dot(-dentG, normalize(L.xy + 1e-4)) * 0.5 - dent * 0.06;
   float res = smoothstep(0.04, e, h) * (1.0 - a);
   float speck = step(hash(floor(px / 1.6)), res * 1.1);
   paper = mix(paper, uFoil * 0.55, speck * 0.75);
@@ -110,7 +118,7 @@ void main() {
   // coat is nearly flat (you can't see the flakes until they start to give).
   // Loosened flakes tip over in the direction they're being pushed, and catch the lamp differently.
   vec2 tilt = (st.rg - 0.5) * (0.025 + dmg * dmg * 0.6) * uGlitter + push * lifted(dmg) * 0.9;
-  vec3 n = normalize(vec3(-hx * uLip - tilt.x, -hy * uLip - tilt.y, 1.0));
+  vec3 n = normalize(vec3(-hx * uLip - tilt.x + dentG.x, -hy * uLip - tilt.y + dentG.y, 1.0));
   float streak = hash(vec2(floor(px.y * 0.7), 3.0)) * 0.6 + hash(vec2(floor(px.y * 0.23), 9.0)) * 0.4;
   float diff = 0.62 + 0.38 * max(dot(n, L), 0.0);
   float nh = max(dot(n, H), 0.0);
@@ -335,6 +343,8 @@ export interface CardPose {
   h: number;
   angle: number;
   lift: number;
+  /** How hard the card is being pressed into the counter (0..1). */
+  press: number;
 }
 
 export class ScratchRenderer {
@@ -450,6 +460,7 @@ export class ScratchRenderer {
     crumbs: Crumbs | null;
     tool: ToolView;
     scale: number;
+    dent: [number, number, number];
   }) {
     const gl = this.gl;
     const { pose: c } = o;
@@ -463,6 +474,7 @@ export class ScratchRenderer {
     gl.uniform1f(u.uRadius, radius);
     gl.uniform2f(u.uLamp, ...o.lamp);
     gl.uniform1f(u.uLift, c.lift);
+    gl.uniform1f(u.uPress, c.press);
     gl.bindVertexArray(this.tri);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
@@ -488,6 +500,7 @@ export class ScratchRenderer {
     o.win.slice(0, 3).forEach((b, i) => win.set(b, i * 4));
     gl.uniform4fv(u['uWin[0]'], win);
     gl.uniform1f(u.uWinOn, o.winOn);
+    gl.uniform3f(u.uDent, ...o.dent);
     const units: [string, WebGLTexture][] = [['uArt', this.art], ['uPrint', this.print], ['uCoat', this.coatTex], ['uStill', this.still]];
     units.forEach(([name, t], i) => {
       gl.activeTexture(gl.TEXTURE0 + i);

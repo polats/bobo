@@ -86,6 +86,15 @@ export class Coat {
   contact = 0;
   /** Bare card under the tool in the last scrape. */
   bare = 0;
+  /**
+   * Flake boundaries the tool's leading edge has crossed since clearEvents: the coat's own grain,
+   * which sets the scrape's pulse rate (fine flakes buzz, coarse ones chatter).
+   */
+  crossings = 0;
+  /** Mean adhesion of the coat under the tool in the last scrape (1 = average): stubborn patches drag. */
+  adhesion = 1;
+  /** Flake under each sample point along the leading edge, from the previous substep. */
+  private edgeIds = new Int32Array(7).fill(-3);
 
   constructor(W: number, H: number, inside: (x: number, y: number) => boolean, p: CoatParams, seed: number) {
     this.W = W;
@@ -264,6 +273,12 @@ export class Coat {
   clearEvents() {
     this.breaks = 0;
     this.abraded = 0;
+    this.crossings = 0;
+  }
+
+  /** The tool lifted: forget what its edge was over. */
+  lift() {
+    this.edgeIds.fill(-3);
   }
 
   /**
@@ -280,7 +295,7 @@ export class Coat {
     const y0 = Math.max(0, Math.floor(y - reach)), y1 = Math.min(H - 1, Math.ceil(y + reach));
     const wear = (dl * t.abrasion * 0.07 * press) / Math.max(0.05, p.abrasionResist);
     const load = dl * t.hardness * 0.45 * press * (1 + p.speedGain * Math.min(2, speed / 220));
-    let contact = 0, bare = 0, nt = this.nTouched;
+    let contact = 0, bare = 0, adh = 0, nt = this.nTouched;
     for (let yy = y0; yy <= y1; yy++) {
       for (let xx = x0; xx <= x1; xx++) {
         const ox = xx - x, oy = yy - y;
@@ -297,6 +312,7 @@ export class Coat {
           continue;
         }
         contact += w * hc;
+        adh += w * hc * this.fStrength[f];
         const a = Math.min(hc, wear * w * grain[c]);
         h[c] = hc - a;
         this.abraded += a;
@@ -311,6 +327,22 @@ export class Coat {
     this.nTouched = nt;
     this.contact = contact;
     this.bare = bare;
+    this.adhesion = contact > 0 ? adh / contact : 1;
+    // Sample the leading edge: every change of flake (or between coat and bare card) is one catch.
+    const ns = t.flat > 0.5 ? 7 : 3;
+    for (let k = 0; k < ns; k++) {
+      const a = (ns > 1 ? (k / (ns - 1)) * 2 - 1 : 0) * 0.8 * r;
+      const sx = Math.round(x - uy * a + ux * rb * 0.9), sy = Math.round(y + ux * a + uy * rb * 0.9);
+      let id = -2;
+      if (sx >= 0 && sy >= 0 && sx < W && sy < H) {
+        const c = sy * W + sx;
+        const f = flake[c];
+        id = f >= 0 && h[c] > 0.3 ? f : -1;
+      }
+      const was = this.edgeIds[k];
+      if (was !== -3 && id !== was && (id >= 0 || was >= 0)) this.crossings++;
+      this.edgeIds[k] = id;
+    }
     this.markDirty(y0, y1 + 1);
   }
 

@@ -79,7 +79,10 @@ class ScratchOff implements ToyInstance {
   private GH = 1;
   private art = document.createElement('canvas');
   private print = document.createElement('canvas');
-  private pose: CardPose = { x: 0, y: 0, w: 1, h: 1, angle: 0, lift: 0 };
+  private pose: CardPose = { x: 0, y: 0, w: 1, h: 1, angle: 0, lift: 0, press: 0 };
+  /** The card sliding and twisting a little under strokes, sprung back to rest (px, rad). */
+  private nudge = { x: 0, y: 0, vx: 0, vy: 0, a: 0, va: 0, fx: 0, fy: 0, torque: 0 };
+  private dent: [number, number, number] = [0, 0, 0];
   private phase: Phase = 'scratch';
   private phaseT = 0;
   private time = 0;
@@ -124,6 +127,8 @@ class ScratchOff implements ToyInstance {
   private blowing = 0;
   private wasBlowing = false;
   private lastWhoosh = -1;
+  private crossRate = 0;
+  private lastPopTick = 0;
 
   private dock: HTMLElement;
   private toolBtns: HTMLButtonElement[] = [];
@@ -148,6 +153,11 @@ class ScratchOff implements ToyInstance {
     toolHardness: 1,
     pressureGain: 1,
     dwellBite: 1,
+    // Sound and touch texture
+    cardGive: 1,
+    grain: 1,
+    drag: 1,
+    popTicks: true,
     // Crumbs
     perFlake: 1.2,
     push: 0.85,
@@ -361,6 +371,10 @@ class ScratchOff implements ToyInstance {
     panel.slider(c, 'grit', { label: 'Grit clicks', min: 0, max: 2, step: 0.05 });
     panel.slider(c, 'scrapeGain', { label: 'Scrape', min: 0, max: 2, step: 0.05 });
     panel.slider(c, 'hapticGain', { label: 'Haptics', min: 0, max: 2, step: 0.05 });
+    panel.slider(c, 'cardGive', { label: 'Card give (dent, slide)', min: 0, max: 3, step: 0.05 });
+    panel.slider(c, 'grain', { label: 'Coat grain (scrape chatter)', min: 0, max: 3, step: 0.05 });
+    panel.slider(c, 'drag', { label: 'Stubborn drag', min: 0, max: 2, step: 0.05 });
+    panel.toggleSwitch(c, 'popTicks', 'A haptic tick per pop');
     panel.heading('Reveal');
     panel.slider(c, 'symbolAt', { label: 'Symbol shows at', min: 0.3, max: 0.95, step: 0.01 });
     panel.slider(c, 'autoFinish', { label: 'Auto-finish at', min: 0.5, max: 1, step: 0.01 });
@@ -395,7 +409,16 @@ class ScratchOff implements ToyInstance {
     const cp = this.crumbParams();
     const pts = [...this.ctx.pointers.active.values()];
     const W = this.width, H = this.height, P = this.pose;
-    const toCell = (u: number, v: number): [number, number] => [((u * W - P.x) / P.w) * this.GW, (((1 - v) * H - P.y) / P.h) * this.GH];
+    // Screen to coat cells, undoing the card's small twist about its centre.
+    const toCell = (u: number, v: number): [number, number] => {
+      const cx = P.x + P.w / 2, cy = P.y + P.h / 2;
+      const dx = u * W - cx, dy = (1 - v) * H - cy;
+      const sn = Math.sin(-P.angle), cs = Math.cos(-P.angle);
+      return [((dx * cs - dy * sn + P.w / 2) / P.w) * this.GW, ((dx * sn + dy * cs + P.h / 2) / P.h) * this.GH];
+    };
+    const ng = this.nudge;
+    ng.fx = ng.fy = ng.torque = 0;
+    let dentAt: [number, number] | null = null;
 
     let blowing = false;
     let blowPower = 0;
@@ -419,6 +442,7 @@ class ScratchOff implements ToyInstance {
           const [gx, gy] = toCell(q.x, q.y);
           let prev = this.last.get(q.id);
           if (!prev || q.justDown) {
+            this.coat.lift();
             prev = { x: gx, y: gy, ux: prev?.ux ?? 0, uy: prev?.uy ?? 1 };
             this.last.set(q.id, prev);
             if (!this.scratchedOnce) {
@@ -461,8 +485,15 @@ class ScratchOff implements ToyInstance {
           pan = (gx / this.GW) * 2 - 1;
           this.lightTo(q.x, q.y, dt);
           const tv = this.toolView, P = this.pose;
-          tv.x = P.x + (gx / this.GW) * P.w;
-          tv.y = P.y + (gy / this.GH) * P.h;
+          tv.x = q.x * W;
+          tv.y = (1 - q.y) * H;
+          // Friction drags the card along the stroke (more when pressing and on coat), twisting it about its centre.
+          const f = Math.min(1, sp / 300) * press * (0.3 + 0.7 * Math.min(1, c / Math.max(1, tool.r * tool.r))) * this.cfg.cardGive;
+          const fx = prev.ux * f, fy = prev.uy * f;
+          ng.fx += fx;
+          ng.fy += fy;
+          ng.torque += ((tv.x - (P.x + P.w / 2)) * fy - (tv.y - (P.y + P.h / 2)) * fx) / P.w;
+          dentAt = [(gx / this.GW) * P.w, (gy / this.GH) * P.h];
           tv.ux = prev.ux;
           tv.uy = prev.uy;
           tv.r = (tool.r / this.GW) * P.w;
@@ -477,6 +508,26 @@ class ScratchOff implements ToyInstance {
         for (const id of this.last.keys()) if (!this.seen.has(id)) this.last.delete(id);
       }
     }
+    // Spring-damped give: a few px of slide and a fraction of a degree of twist.
+    const pr = this.ctx.pixelRatio;
+    const K = 260, D = 2 * Math.sqrt(K) * 0.55;
+    ng.vx += (ng.fx * 900 * pr - K * ng.x - D * ng.vx) * dt;
+    ng.vy += (ng.fy * 900 * pr - K * ng.y - D * ng.vy) * dt;
+    ng.va += (ng.torque * 1.6 - K * ng.a - D * ng.va) * dt;
+    ng.x += ng.vx * dt;
+    ng.y += ng.vy * dt;
+    ng.a += ng.va * dt;
+    const lim = 4 * pr;
+    ng.x = Math.max(-lim, Math.min(lim, ng.x));
+    ng.y = Math.max(-lim, Math.min(lim, ng.y));
+    ng.a = Math.max(-0.012, Math.min(0.012, ng.a));
+    const dz = dentAt ? Math.min(1, 0.35 + 0.45 * this.press) * this.cfg.cardGive : 0;
+    if (dentAt) {
+      this.dent[0] = dentAt[0];
+      this.dent[1] = dentAt[1];
+    }
+    this.dent[2] += (dz - this.dent[2]) * Math.min(1, dt * 14);
+    P.press = this.dent[2];
     if (!touching) {
       this.lightTo(-1, -1, dt);
       this.toolView.alpha = Math.max(0, this.toolView.alpha - dt * 8);
@@ -519,6 +570,7 @@ class ScratchOff implements ToyInstance {
       crumbs: this.crumbs,
       tool: this.toolView,
       scale: this.ctx.pixelRatio,
+      dent: this.dent,
     });
     this.flash *= Math.exp(-dt * 7);
     this.ctx.setStatus(`${this.crumbs.count} crumbs · ${this.coat.goneFlakes}/${this.coat.flakes} flakes · sim ${this.simMs.toFixed(1)}ms · press ${this.pressMode} ${this.press.toFixed(2)}`);
@@ -693,8 +745,10 @@ class ScratchOff implements ToyInstance {
         this.ctx.haptic('light');
       }
     } else {
-      P.x = rest.x;
-      P.y = rest.y;
+      const ng = this.nudge;
+      P.x = rest.x + ng.x;
+      P.y = rest.y + ng.y;
+      P.angle = ng.a;
     }
   }
 
@@ -753,9 +807,14 @@ class ScratchOff implements ToyInstance {
     this.paperLvl += ((o.touching ? onPaper * this.speedS : 0) - this.paperLvl) * k;
     const breaks = this.phase === 'scratch' ? this.coat.breaks : 0;
     if (this.phase !== 'burst') {
-      // Pressing harder scrapes louder and a little lower.
+      // The scrape's pulse rate is the coat's grain: one catch per flake edge the tool crosses. Pressing
+      // harder scrapes louder and a little lower; stubborn patches drag it louder and lower still.
       const pr = this.press;
-      this.scrape.set(this.scrapeLvl * cfg.scrapeGain * (0.65 + 0.35 * pr), 30 + this.speedS * 260 * o.tool.rough, o.tool.freq * (0.85 + onCoat * 0.3) * (1.12 - 0.12 * pr), o.pan * 0.6);
+      const cross = o.touching ? this.coat.crossings / Math.max(dt, 1e-3) : 0;
+      this.crossRate += (cross - this.crossRate) * Math.min(1, dt * 18);
+      const drag = Math.min(1.6, Math.max(0.6, 1 + cfg.drag * (this.coat.adhesion - 1) * 0.5));
+      const rate = Math.min(700, 20 + this.crossRate * cfg.grain * o.tool.rough);
+      this.scrape.set(this.scrapeLvl * cfg.scrapeGain * (0.65 + 0.35 * pr) * drag, rate, (o.tool.freq * (0.85 + onCoat * 0.3) * (1.12 - 0.12 * pr)) / Math.sqrt(drag), o.pan * 0.6);
       this.grit.set(Math.min(1, Math.max(0, breaks - 6) / 14) * cfg.grit, 0.85);
     } else this.scrape.set(0, 30, o.tool.freq);
     this.paper.set(this.paperLvl * 0.22 * cfg.scrapeGain, 0.55);
@@ -766,6 +825,13 @@ class ScratchOff implements ToyInstance {
       ctx.sound.play('whoosh', { pitch: 0.8 + Math.random() * 0.3, gain: 0.3 });
     }
     this.wasBlowing = o.blowing;
+    // A crisp tick per pop (a burst for a clump), over the continuous scrape.
+    if (cfg.popTicks && breaks && this.phase === 'scratch' && this.time - this.lastPopTick > 0.045) {
+      this.lastPopTick = this.time;
+      let chain = 0;
+      for (let i = 0; i < breaks; i++) chain += this.coat.bChain[i];
+      ctx.haptic(chain > 3 || breaks > 10 ? 'medium' : 'light');
+    }
     if (o.touching && this.phase === 'scratch') {
       const level = (onCoat * Math.min(1, this.speedS) * 0.35 + Math.min(0.65, breaks * 0.07) + onPaper * this.speedS * 0.08) * cfg.hapticGain;
       if (level > 0.02) ctx.hapticLevel(Math.min(1, level * (0.7 + 0.3 * this.press)), o.tool.sharp);
