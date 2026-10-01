@@ -2,6 +2,7 @@ import type { Toy, ToyContext, ToyInstance } from '../../shell/types';
 import type { Loop, Slip } from '../../shell/sound';
 import { Coat, type CoatParams, type ToolShape } from './coat';
 import { Crumbs, type CrumbParams } from './crumbs';
+import { Shavings, type ShaveParams } from './shavings';
 import { CARD_ASPECT, COAT_BOX, inCoat, makeCard, paintCard, paintCoatPrint, type Card } from './card';
 import { COAT_IDS, COATS, type CoatDef, type CoatId } from './coats';
 import { ScratchRenderer, type CardPose, type ToolView } from './render';
@@ -80,6 +81,9 @@ class ScratchOff implements ToyInstance {
   /** How far the stroke has turned since the last pass began (a scrub in circles counts as passes). */
   private turned = 0;
   private crumbs!: Crumbs;
+  private shavings = new Shavings();
+  /** Per pointer: the tool frame its wax chip rides on, the chip's start direction, time spent stalled. */
+  private chips = new Map<number, { frame: { x: number; y: number; ux: number; uy: number }; ux: number; uy: number; still: number }>();
   private GW = 1;
   private GH = 1;
   private art = document.createElement('canvas');
@@ -164,6 +168,11 @@ class ScratchOff implements ToyInstance {
     chainDepth: 6,
     smear: 0,
     passes: 0,
+    cut: 0,
+    waxCurl: 1,
+    chipLength: 50,
+    chipWidth: 0.8,
+    chipFlow: 0.12,
     layers: 1,
     basePasses: 3,
     baseFlakeSize: 2.5,
@@ -323,7 +332,13 @@ class ScratchOff implements ToyInstance {
       chainDepth: c.chainDepth,
       smear: c.smear,
       passes: c.passes,
+      cut: c.cut,
     };
+  }
+
+  private shaveParams(): ShaveParams {
+    const c = this.cfg;
+    return { curl: c.waxCurl, length: c.chipLength, width: c.chipWidth, flow: c.chipFlow };
   }
 
   /** The base layer: sticky gum that wears a bite per pass. */
@@ -341,6 +356,7 @@ class ScratchOff implements ToyInstance {
       chainDepth: 0,
       smear: c.baseSmear,
       passes: Math.round(c.basePasses),
+      cut: 0,
     };
   }
 
@@ -356,11 +372,16 @@ class ScratchOff implements ToyInstance {
     const pr = this.ctx.pixelRatio;
     this.GW = Math.round(Math.min(300, Math.max(170, this.pose.w / pr / 1.3)));
     this.GH = Math.round(this.GW / CARD_ASPECT);
-    const artW = Math.min(1400, Math.round(this.pose.w));
-    paintCard(this.card, this.art, artW);
-    paintCoatPrint(this.card, this.print, Math.round(artW * 0.6));
+    this.paintArt();
     this.crumbs = new Crumbs();
     this.recoat();
+  }
+
+  /** The printed ticket (scratch-art board under wax) and the ink on its coat. */
+  private paintArt() {
+    const artW = Math.min(1400, Math.round(this.pose.w));
+    paintCard(this.card, this.art, artW, this.coatDef.id === 'wax');
+    paintCoatPrint(this.card, this.print, Math.round(artW * 0.6));
   }
 
   /** Load a coat's settings (the Tune panel then edits that coat). */
@@ -380,6 +401,8 @@ class ScratchOff implements ToyInstance {
     this.base = this.cfg.layers >= 2 ? new Coat(GW, GH, inside, this.baseParams(), this.seed ^ 0x9e3779b9) : null;
     this.meanArea = this.coat.coatCells / Math.max(1, this.coat.flakes);
     this.crumbs.clear();
+    this.shavings.clear();
+    this.chips.clear();
     this.r.setCard(this.art, this.print, this.coat, this.base);
     this.pinged = this.card.cells.map(() => false);
     this.symCount.clear();
@@ -415,6 +438,7 @@ class ScratchOff implements ToyInstance {
       (v) => {
         this.coatPick = v;
         this.applyCoat(v === 'card' ? this.card.design.coat : v);
+        this.paintArt();
         this.recoat();
       },
     );
@@ -428,6 +452,12 @@ class ScratchOff implements ToyInstance {
     panel.slider(c, 'crackReach', { label: 'Crack reach (0 = runs ahead)', min: 0, max: 0.6, step: 0.01 });
     panel.slider(c, 'chainDepth', { label: 'Crack run (flakes)', min: 0, max: 12, step: 1 });
     panel.slider(c, 'smear', { label: 'Smear', min: 0, max: 0.9, step: 0.05 });
+    panel.heading('Wax shavings');
+    panel.slider(c, 'cut', { label: 'Cut (0 = flakes, 1 = clean groove)', min: 0, max: 1, step: 1 });
+    panel.slider(c, 'waxCurl', { label: 'Curl radius', min: 0.3, max: 3, step: 0.05 });
+    panel.slider(c, 'chipLength', { label: 'Chip length before it snaps', min: 10, max: 110, step: 1 });
+    panel.slider(c, 'chipWidth', { label: 'Chip width', min: 0.2, max: 1.2, step: 0.05 });
+    panel.slider(c, 'chipFlow', { label: 'Chip flow (spring)', min: 0, max: 0.5, step: 0.01 });
     panel.heading('Sticky base layer');
     panel.slider(c, 'layers', { label: 'Layers (2 = tacky base under the skin)', min: 1, max: 2, step: 1, onChange: later });
     panel.slider(c, 'basePasses', { label: 'Passes to lift the base', min: 1, max: 8, step: 1 });
@@ -516,6 +546,7 @@ class ScratchOff implements ToyInstance {
         const [bx, by] = toCell(u, v);
         blowPower = (0.8 + Math.min(1.5, sp / this.ctx.pixelRatio / 12)) * this.cfg.blow;
         this.crumbs.blow(bx, by, this.GW * 0.18, blowPower, dt, this.cfg.flutter);
+        this.shavings.blow(bx, by, this.GW * 0.18, blowPower, dt);
         blowing = true;
       } else if (this.phase === 'scratch') {
         for (const q of pts) {
@@ -555,6 +586,7 @@ class ScratchOff implements ToyInstance {
           const dwell = this.cfg.dwellBite * dt * 7 * Math.exp(-sp / 50);
           const tvx = mx / Math.max(dt, 1e-3), tvy = my / Math.max(dt, 1e-3);
           let c = 0, b = 0;
+          const cutBefore = this.coat.cutAmt;
           for (let k = 1; k <= steps; k++) {
             const x = prev.x + (mx * k) / steps, y = prev.y + (my * k) / steps;
             const dl = d / steps + dwell / steps;
@@ -569,7 +601,9 @@ class ScratchOff implements ToyInstance {
               b += this.base.bare / steps;
             } else b += this.coat.bare / steps;
             this.crumbs.plough(x, y, prev.ux, prev.uy, tvx, tvy, tool.r, tool.flat, cp);
+            if (k === steps && this.shavings.ribbons.length) this.shavings.plough(x, y, tvx, tvy, tool.r);
           }
+          if (this.cfg.cut > 0) this.chip(q.id, gx, gy, prev.ux, prev.uy, cutBefore, sp, press, tool, rb, dt);
           prev.x = gx;
           prev.y = gy;
           touching = true;
@@ -600,6 +634,8 @@ class ScratchOff implements ToyInstance {
           this.coat.abraded = 0;
         }
         for (const id of this.last.keys()) if (!this.seen.has(id)) this.last.delete(id);
+        this.shavings.release(this.seen);
+        for (const id of this.chips.keys()) if (!this.seen.has(id)) this.chips.delete(id);
       }
     }
     // Spring-damped give: a few px of slide and a fraction of a degree of twist.
@@ -633,6 +669,7 @@ class ScratchOff implements ToyInstance {
     if (breath > 0.06 && !blowing) {
       blowPower = (0.7 + breath * 1.6) * this.cfg.blow;
       this.crumbs.blow(this.GW * 0.5, this.GH * 0.62, this.GW * 0.3, blowPower, dt, this.cfg.flutter);
+      this.shavings.blow(this.GW * 0.5, this.GH * 0.62, this.GW * 0.3, blowPower, dt);
       blowing = true;
     }
 
@@ -646,6 +683,7 @@ class ScratchOff implements ToyInstance {
       }
     }
     this.crumbs.step(dt, cp, (x, y) => x >= 0 && y >= 0 && x < this.GW && y < this.GH);
+    this.shavings.step(dt, (x, y) => x >= -4 && y >= -4 && x < this.GW + 4 && y < this.GH + 4);
     if (this.base && this.cfg.restick > 0 && this.phase === 'scratch' && this.frameNo % 6 === 0) this.restick();
 
     this.stepPhase(dt);
@@ -664,6 +702,7 @@ class ScratchOff implements ToyInstance {
       foil: this.coatDef.id === 'silver' ? this.card.design.foil : this.coatDef.colour,
       mode: this.coatDef.mode,
       baseColour: this.coatDef.base?.colour ?? [0.62, 0.56, 0.46],
+      shavings: this.shavings,
       look: this.cfg,
       time: t,
       flash: this.flash,
@@ -739,6 +778,35 @@ class ScratchOff implements ToyInstance {
       n++;
     }
     if (n) this.ctx.sound.play('squish', { pitch: 1.6 + Math.random() * 0.4, gain: 0.08 * n });
+  }
+
+  /**
+   * Feed this pointer's wax chip with what the edge cut this frame. Its curl radius follows the cut:
+   * pressing harder makes a thicker chip that curls looser, a fast stroke curls it tighter. A sharp
+   * turn, a stall, or lifting snaps it off.
+   */
+  private chip(id: number, gx: number, gy: number, ux: number, uy: number, before: number, sp: number, press: number, tool: ToolShape, rb: number, dt: number) {
+    let ch = this.chips.get(id);
+    if (!ch) {
+      ch = { frame: { x: gx, y: gy, ux, uy }, ux, uy, still: 0 };
+      this.chips.set(id, ch);
+    }
+    Object.assign(ch.frame, { x: gx, y: gy, ux, uy });
+    const growing = this.shavings.growing.has(id);
+    if (growing && (ux * ch.ux + uy * ch.uy < 0.55 || ch.still > 0.3)) {
+      this.shavings.snap(id);
+      ch.still = 0;
+    }
+    ch.still = sp < 12 ? ch.still + dt : 0;
+    const width = Math.max(1, tool.r * 2 * this.cfg.chipWidth);
+    const len = ((this.coat.cutAmt - before) / Math.max(1, tool.r * 1.6)) * 0.7;
+    if (len <= 0) return;
+    if (!this.shavings.growing.has(id)) {
+      ch.ux = ux;
+      ch.uy = uy;
+    }
+    const R = (this.cfg.waxCurl * (2.5 + 2.5 * press)) / (1 + sp / 400) + tool.r * 0.15;
+    this.shavings.feed(id, ch.frame, len, R, rb * 0.6, width, this.shaveParams());
   }
 
   private newPass() {
@@ -961,7 +1029,8 @@ class ScratchOff implements ToyInstance {
       const cPitch = cd.pitch + ((cd.base?.pitch ?? cd.pitch) - cd.pitch) * bs;
       const cRate = cd.rate + ((cd.base?.rate ?? cd.rate) - cd.rate) * bs;
       const grainRate = this.crossRate + (this.base ? (this.base.crossings / Math.max(dt, 1e-3)) * bs : 0);
-      const rate = Math.min(700, 20 + grainRate * cfg.grain * o.tool.rough * cRate);
+      // Wax has no grain to catch on: the cut is a smooth, steady shave.
+      const rate = cfg.cut > 0 ? 160 + this.speedS * 220 : Math.min(700, 20 + grainRate * cfg.grain * o.tool.rough * cRate);
       const freq = (o.tool.freq * cPitch * (0.85 + onCoat * 0.3) * (1.12 - 0.12 * pr)) / Math.sqrt(drag);
       this.scrape.set(this.scrapeLvl * cfg.scrapeGain * (0.65 + 0.35 * pr) * drag, rate, freq, o.pan * 0.6);
       this.grit.set(Math.min(1, Math.max(0, breaks - 6) / 14) * cfg.grit, 0.85);
@@ -974,6 +1043,11 @@ class ScratchOff implements ToyInstance {
       ctx.sound.play('whoosh', { pitch: 0.8 + Math.random() * 0.3, gain: 0.3 });
     }
     this.wasBlowing = o.blowing;
+    if (this.shavings.snapped) {
+      this.shavings.snapped = 0;
+      ctx.sound.play('tick', { pitch: 0.6 + Math.random() * 0.2, gain: 0.3 });
+      ctx.haptic('light');
+    }
     // A crisp tick per pop (a burst for a clump), over the continuous scrape.
     if (cfg.popTicks && breaks && this.phase === 'scratch' && this.time - this.lastPopTick > 0.045) {
       this.lastPopTick = this.time;
@@ -998,9 +1072,7 @@ class ScratchOff implements ToyInstance {
     this.layout();
     // The coat grid is in card units; only the art is resolution-bound, so repaint it.
     if (Math.abs(this.pose.w - oldW) > 2) {
-      const artW = Math.min(1400, Math.round(this.pose.w));
-      paintCard(this.card, this.art, artW);
-      paintCoatPrint(this.card, this.print, Math.round(artW * 0.6));
+      this.paintArt();
       this.r.setCard(this.art, this.print, this.coat, this.base);
     }
   }

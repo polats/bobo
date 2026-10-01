@@ -34,6 +34,11 @@ export interface CoatParams {
    * (a new touch, a reversal, or a full turn of a scrub), thinning each time, and lets go on the Nth.
    */
   passes: number;
+  /**
+   * Ductile coat (wax): 0 = flakes and abrasion; 1 = the edge cuts a clean groove (the core of the
+   * contact is cleared outright) and shoves a little burr up along its sides.
+   */
+  cut: number;
 }
 
 export interface ToolShape {
@@ -106,6 +111,8 @@ export class Coat {
   breaks = 0;
   /** Coat worn away by abrasion since the last clearEvents (cells' worth). */
   abraded = 0;
+  /** Coat cut out of the groove since the last clearEvents (cells' worth): it becomes the shaving. */
+  cutAmt = 0;
   /** Coat under the tool in the last scrape (sum of weight × thickness), for sound. */
   contact = 0;
   /** Bare card under the tool in the last scrape. */
@@ -305,6 +312,7 @@ export class Coat {
   }
 
   clearEvents() {
+    this.cutAmt = 0;
     this.bites = 0;
     this.breaks = 0;
     this.abraded = 0;
@@ -352,6 +360,14 @@ export class Coat {
         }
         contact += w * hc;
         adh += w * hc * this.fStrength[f];
+        if (p.cut > 0) {
+          // Wax: the core of the edge clears the groove; its rim ploughs up a burr.
+          if (w > 0.35) {
+            this.cutAmt += hc;
+            h[c] = 0;
+          } else h[c] = Math.min(1.2, hc + p.cut * 0.12 * w * dl);
+          continue;
+        }
         const a = Math.min(hc, wear * w * grain[c]);
         h[c] = hc - a;
         if (p.smear > 0 && a > 0) {

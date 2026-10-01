@@ -5,6 +5,7 @@
 import { compile, Program } from '../../shell/gl';
 import { MAX_CRUMBS, type Crumbs } from './crumbs';
 import type { Coat } from './coat';
+import { MAX_PTS, MAX_RIBBONS, type Shavings } from './shavings';
 
 const fullVert = `#version 300 es
 layout(location = 0) in vec2 aPosition;
@@ -176,6 +177,11 @@ void main() {
     // Matte rubber with a fine grain.
     float grainN = hash(floor(px / 1.2)) * 0.06;
     foil = uFoil * (0.75 + 0.25 * diff) * (0.97 + grainN) * (1.0 - worn * 0.15) + spec * 0.3;
+  } else if (uMode == 5) {
+    // Scratch-art wax: soft satin black with a waxy sheen; the burr along a groove catches the lamp.
+    float satin = pow(nh, 18.0) * 0.18 * uSheen + pow(nh, 120.0) * 0.4 * uSheen;
+    float burr = smoothstep(1.0, 1.15, h);
+    foil = uFoil * (0.8 + 0.2 * diff) + satin + burr * 0.12;
   } else if (uMode == 4) {
     // Gold leaf: a mirror, so it shows the room (dark below, the lamp's warm pool above) through a
     // fine crinkle, laid in overlapping squares whose seams read as slightly thicker lines.
@@ -200,7 +206,7 @@ void main() {
   } else foil += vec3(spec + glint);
   foil = foil / (1.0 + max(foil - 0.85, 0.0));
   float ink = texture(uPrint, vUv).r;
-  vec3 inkCol = uMode == 1 ? vec3(0.85, 0.72, 0.42) : vec3(0.13, 0.14, 0.2);
+  vec3 inkCol = uMode == 1 ? vec3(0.85, 0.72, 0.42) : uMode == 5 ? vec3(0.3, 0.3, 0.34) : vec3(0.13, 0.14, 0.2);
   foil = mix(foil, inkCol * diff + spec * 0.15, ink * 0.8);
   float crack = st.b * smoothstep(0.2, 0.95, dmg);
   foil *= 1.0 - crack * (uMode == 1 ? 0.2 : 0.55);
@@ -424,6 +430,37 @@ void main() {
   o = col * uAlpha;
 }`;
 
+// Wax shavings: strips in screen px, lifted by their height and shadowed on the card.
+const ribbonVert = `#version 300 es
+layout(location = 0) in vec4 aA;   // x, y px, height px, upward face (-1..1)
+layout(location = 1) in vec2 aB;   // along the chip (0..1), alpha
+uniform vec2 uRes;
+uniform float uShadow;
+uniform vec2 uShadowDir;
+out float vUp, vAlong, vAlpha;
+void main() {
+  vec2 p = aA.xy;
+  if (uShadow > 0.5) p += uShadowDir * (aA.z * 0.7 + 1.5);
+  else p.y -= aA.z * 0.6;
+  gl_Position = vec4(p.x / uRes.x * 2.0 - 1.0, 1.0 - p.y / uRes.y * 2.0, 0.0, 1.0);
+  vUp = aA.w; vAlong = aB.x; vAlpha = aB.y;
+}`;
+
+const ribbonFrag = `#version 300 es
+precision highp float;
+in float vUp, vAlong, vAlpha;
+uniform float uShadow;
+out vec4 o;
+void main() {
+  if (uShadow > 0.5) { o = vec4(0.0, 0.0, 0.0, 0.3 * vAlpha); return; }
+  // Black wax, glossy where its face turns to the lamp; the underside keeps a faint rainbow from the
+  // layer it was cut off.
+  float face = abs(vUp);
+  vec3 bow = 0.5 + 0.5 * cos(6.2832 * (vAlong * 2.0 + vec3(0.0, 0.33, 0.67)));
+  vec3 col = vUp > 0.0 ? vec3(0.05) + pow(face, 4.0) * 0.55 : mix(vec3(0.04), bow * 0.35, 0.6) + pow(face, 6.0) * 0.2;
+  o = vec4(col * vAlpha, vAlpha);
+}`;
+
 export interface Look {
   sheen: number;
   streak: number;
@@ -464,6 +501,10 @@ export class ScratchRenderer {
   private card: Program;
   private crumb: Program;
   private toolP: Program;
+  private ribbonP: Program;
+  private ribbonVao: WebGLVertexArrayObject;
+  private ribbonBuf: WebGLBuffer;
+  private ribbonData = new Float32Array(MAX_RIBBONS * MAX_PTS * 6 * 6);
   private quad: WebGLVertexArrayObject;
   private tri: WebGLVertexArrayObject;
   private crumbVao: WebGLVertexArrayObject;
@@ -483,6 +524,17 @@ export class ScratchRenderer {
     this.card = new Program(gl, compile(gl, gl.VERTEX_SHADER, cardVert), cardFrag);
     this.crumb = new Program(gl, compile(gl, gl.VERTEX_SHADER, crumbVert), crumbFrag);
     this.toolP = new Program(gl, compile(gl, gl.VERTEX_SHADER, toolVert), toolFrag);
+    this.ribbonP = new Program(gl, compile(gl, gl.VERTEX_SHADER, ribbonVert), ribbonFrag);
+    this.ribbonVao = gl.createVertexArray()!;
+    gl.bindVertexArray(this.ribbonVao);
+    this.ribbonBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.ribbonBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, this.ribbonData.byteLength, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 24, 16);
+    gl.bindVertexArray(null);
     this.tri = gl.createVertexArray()!;
     gl.bindVertexArray(this.tri);
     let b = gl.createBuffer();
@@ -555,6 +607,65 @@ export class ScratchRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
+  private drawRibbons(width: number, height: number, c: CardPose, sh: Shavings, light: [number, number, number]) {
+    const gl = this.gl;
+    const d = this.ribbonData;
+    const sx = c.w / this.grid[0], sy = c.h / this.grid[1];
+    const sn = Math.sin(c.angle), cs = Math.cos(c.angle);
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+    let k = 0;
+    const put = (wx: number, wy: number, z: number, up: number, along: number, alpha: number) => {
+      const lx = wx * sx - c.w / 2, ly = wy * sy - c.h / 2;
+      d[k++] = cx + lx * cs - ly * sn;
+      d[k++] = cy + lx * sn + ly * cs;
+      d[k++] = z * sx;
+      d[k++] = up;
+      d[k++] = along;
+      d[k++] = alpha;
+    };
+    for (const r of sh.ribbons) {
+      if (r.n < 2) continue;
+      const f = r.attached ? r.frame : null;
+      if (r.attached && !f) continue;
+      // World across direction of the strip, and each point in world cells.
+      const nx = f ? -f.uy : r.nx, ny = f ? f.ux : r.ny;
+      const hw = r.width / 2;
+      const alpha = Math.min(1, r.life);
+      let ax = 0, ay = 0, pz = 0, pu = 0;
+      for (let i = 0; i < r.n; i++) {
+        const a = r.a[i], cc = r.c[i];
+        const wx = f ? f.x + f.ux * a - f.uy * cc : a;
+        const wy = f ? f.y + f.uy * a + f.ux * cc : cc;
+        if (i > 0 && k + 36 <= d.length) {
+          const t0 = (i - 1) / r.n, t1 = i / r.n;
+          put(ax - nx * hw, ay - ny * hw, pz, pu, t0, alpha);
+          put(ax + nx * hw, ay + ny * hw, pz, pu, t0, alpha);
+          put(wx - nx * hw, wy - ny * hw, r.z[i], r.up[i], t1, alpha);
+          put(ax + nx * hw, ay + ny * hw, pz, pu, t0, alpha);
+          put(wx + nx * hw, wy + ny * hw, r.z[i], r.up[i], t1, alpha);
+          put(wx - nx * hw, wy - ny * hw, r.z[i], r.up[i], t1, alpha);
+        }
+        ax = wx;
+        ay = wy;
+        pz = r.z[i];
+        pu = r.up[i];
+      }
+    }
+    const verts = k / 6;
+    if (!verts) return;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.ribbonBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.subarray(0, k));
+    const u = this.ribbonP.use();
+    gl.uniform2f(u.uRes, width, height);
+    const lx = light[0] - 0.5, ly = light[1] - 0.5, ll = Math.hypot(lx, ly) + 1e-3;
+    gl.uniform2f(u.uShadowDir, -lx / ll, -ly / ll);
+    gl.bindVertexArray(this.ribbonVao);
+    gl.uniform1f(u.uShadow, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, verts);
+    gl.uniform1f(u.uShadow, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, verts);
+  }
+
   /** Upload the coat rows that changed. */
   update(coat: Coat, base: Coat | null) {
     if (base) this.upload(base, this.baseTex);
@@ -591,6 +702,7 @@ export class ScratchRenderer {
     /** Coat look (see CoatDef.mode). */
     mode: number;
     baseColour: [number, number, number];
+    shavings: Shavings | null;
   }) {
     const gl = this.gl;
     const { pose: c } = o;
@@ -681,6 +793,7 @@ export class ScratchRenderer {
       gl.uniform1f(u.uShadow, 0);
       gl.drawArrays(gl.POINTS, 0, cr.count);
     }
+    if (o.shavings && o.shavings.ribbons.length) this.drawRibbons(o.width, o.height, c, o.shavings, o.light);
     const tv = o.tool;
     if (tv.kind > 0 && tv.alpha > 0.01) {
       const u = this.toolP.use();
@@ -707,5 +820,6 @@ export class ScratchRenderer {
     const gl = this.gl;
     for (const t of [this.art, this.print, this.coatTex, this.still, this.baseTex]) gl.deleteTexture(t);
     gl.deleteBuffer(this.crumbBuf);
+    gl.deleteBuffer(this.ribbonBuf);
   }
 }

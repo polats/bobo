@@ -216,6 +216,7 @@ const DESIGNS: Design[] = [
   { title: 'MOON FRUIT', sub: 'MIDNIGHT ORCHARD', top: '#1d6f8c', bottom: '#0b2140', ink: '#ffe9f2', accent: '#ff8fb8', foil: [0.8, 0.8, 0.84], coat: 'crackle' },
   { title: 'JADE FORTUNE', sub: 'TEA HOUSE SPECIAL', top: '#1e8a5a', bottom: '#0b3324', ink: '#fdf6dc', accent: '#f2d27a', foil: [0.82, 0.78, 0.66], coat: 'latex' },
   { title: 'GOLDEN KOI', sub: 'LANTERN FESTIVAL', top: '#b31b1b', bottom: '#3d0606', ink: '#fff0c2', accent: '#ffcf5a', foil: [1, 0.78, 0.36], coat: 'gold' },
+  { title: 'RAINBOW NIGHT', sub: 'SCRATCH ART', top: '#2a1f4d', bottom: '#0b0818', ink: '#f3eaff', accent: '#9ef0ff', foil: [0.06, 0.06, 0.07], coat: 'wax' },
   { title: 'NEON CHERRY', sub: 'ARCADE ALLEY', top: '#7a2bd6', bottom: '#1c0a3d', ink: '#f5ecff', accent: '#45f0d2', foil: [0.76, 0.78, 0.84], coat: 'holo' },
 ];
 
@@ -283,7 +284,8 @@ export function makeCard(seed: number, winChance = 0.4): Card {
 const symById = (id: string) => SYMBOLS.find((s) => s.id === id)!;
 
 /** Paint the printed ticket (what's under the coat, and the frame around it). */
-export function paintCard(card: Card, cv: HTMLCanvasElement, width: number) {
+/** `rainbow`: the scratch area is printed as scratch-art board (rainbow bands) instead of paper. */
+export function paintCard(card: Card, cv: HTMLCanvasElement, width: number, rainbow = false) {
   const W = (cv.width = Math.round(width));
   const H = (cv.height = Math.round(width / CARD_ASPECT));
   const g = cv.getContext('2d')!;
@@ -328,7 +330,11 @@ export function paintCard(card: Card, cv: HTMLCanvasElement, width: number) {
   // Scratch area: paper.
   const b = COAT_BOX;
   roundRect(g, b.x0 * W, b.y0 * H, (b.x1 - b.x0) * W, (b.y1 - b.y0) * H, b.r * W);
-  g.fillStyle = '#fbf3e0';
+  if (rainbow) {
+    const rb = g.createLinearGradient(b.x0 * W, b.y0 * H, b.x1 * W, b.y1 * H);
+    ['#ff4f6d', '#ff9a3c', '#ffe14d', '#5fe37a', '#3fc6ff', '#7a6bff', '#e05bff'].forEach((c, i, a) => rb.addColorStop(i / (a.length - 1), c));
+    g.fillStyle = rb;
+  } else g.fillStyle = '#fbf3e0';
   g.fill();
   g.save();
   g.clip();
@@ -348,7 +354,12 @@ export function paintCard(card: Card, cv: HTMLCanvasElement, width: number) {
     s.paint(g, sz);
     g.restore();
     g.font = `800 ${W * 0.045}px ui-rounded, 'Avenir Next', system-ui, sans-serif`;
-    g.fillStyle = '#3a2a1a';
+    if (rainbow) {
+      g.lineWidth = W * 0.012;
+      g.strokeStyle = 'rgba(20,10,40,0.6)';
+      g.strokeText(`$${s.prize}`, cx, c.y1 * H - H * 0.022);
+      g.fillStyle = '#ffffff';
+    } else g.fillStyle = '#3a2a1a';
     g.fillText(`$${s.prize}`, cx, c.y1 * H - H * 0.022);
   }
   // Footer.

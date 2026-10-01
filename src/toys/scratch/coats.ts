@@ -2,12 +2,12 @@
 // looks, how it sounds and buzzes, and what its crumbs do. Choosing a coat writes its values into the
 // toy's settings (the Tune panel then edits that coat live); later, upgrades layer on top.
 
-export type CoatId = 'silver' | 'crackle' | 'latex' | 'holo' | 'gold';
+export type CoatId = 'silver' | 'crackle' | 'latex' | 'holo' | 'gold' | 'wax';
 
 export interface CoatDef {
   id: CoatId;
   label: string;
-  /** Shader look: 0 silver latex, 1 crackle lacquer, 2 rubbery latex, 3 holographic grating, 4 gold leaf. */
+  /** Shader look: 0 silver latex, 1 crackle lacquer, 2 rubbery latex, 3 holographic grating, 4 gold leaf, 5 scratch-art wax. */
   mode: number;
   colour: [number, number, number];
   /** Values for the toy's settings object. */
@@ -35,7 +35,7 @@ export const COATS: Record<CoatId, CoatDef> = {
     colour: [0.78, 0.79, 0.82],
     set: {
       flakeSize: 4.5, flakeSpread: 0.55, strength: 1, adhesionNoise: 0.6, brittleness: 0.35, abrasionResist: 1, speedGain: 0.4,
-      crackReach: 0.2, chainDepth: 6, smear: 0, passes: 0, ...NO_BASE,
+      crackReach: 0.2, chainDepth: 6, smear: 0, passes: 0, cut: 0, ...NO_BASE,
       perFlake: 1.2, friction: 9, curls: 0.45, flutter: 0,
       sheen: 1, streak: 0.8, glitter: 1, lip: 3, lift: 0.7,
     },
@@ -54,7 +54,7 @@ export const COATS: Record<CoatId, CoatDef> = {
     colour: [0.1, 0.12, 0.2],
     set: {
       flakeSize: 8, flakeSpread: 0.75, strength: 0.8, adhesionNoise: 0.35, brittleness: 0.45, abrasionResist: 4, speedGain: 0.7,
-      crackReach: 0.05, chainDepth: 2, smear: 0, passes: 0, ...NO_BASE,
+      crackReach: 0.05, chainDepth: 2, smear: 0, passes: 0, cut: 0, ...NO_BASE,
       perFlake: 2.2, friction: 7, curls: 0, flutter: 0,
       sheen: 1.6, streak: 0, glitter: 0.6, lip: 4.5, lift: 1.1,
     },
@@ -73,7 +73,7 @@ export const COATS: Record<CoatId, CoatDef> = {
     colour: [0.55, 0.56, 0.58],
     set: {
       flakeSize: 3, flakeSpread: 0.3, strength: 1.6, adhesionNoise: 0.4, brittleness: 0, abrasionResist: 0.55, speedGain: 0.1,
-      crackReach: 0.2, chainDepth: 0, smear: 0.45, passes: 0,
+      crackReach: 0.2, chainDepth: 0, smear: 0.45, passes: 0, cut: 0,
       layers: 2, basePasses: 2, baseFlakeSize: 2.5, baseStrength: 1, baseSmear: 0.25, restick: 2.5,
       perFlake: 0.6, friction: 18, curls: 1, flutter: 0,
       sheen: 0.15, streak: 0, glitter: 0, lip: 4, lift: 0.4,
@@ -94,7 +94,7 @@ export const COATS: Record<CoatId, CoatDef> = {
     colour: [0.82, 0.84, 0.88],
     set: {
       flakeSize: 3.5, flakeSpread: 0.4, strength: 0.8, adhesionNoise: 0.4, brittleness: 0.2, abrasionResist: 1.6, speedGain: 0.4,
-      crackReach: 0.2, chainDepth: 4, smear: 0, passes: 0, ...NO_BASE,
+      crackReach: 0.2, chainDepth: 4, smear: 0, passes: 0, cut: 0, ...NO_BASE,
       perFlake: 1, friction: 9, curls: 0.6, flutter: 0,
       sheen: 1.2, streak: 0.4, glitter: 1.4, lip: 2, lift: 0.6,
     },
@@ -114,7 +114,7 @@ export const COATS: Record<CoatId, CoatDef> = {
     colour: [1, 0.78, 0.36],
     set: {
       flakeSize: 6, flakeSpread: 0.9, strength: 0.45, adhesionNoise: 0.5, brittleness: 0.5, abrasionResist: 0.45, speedGain: 0.3,
-      crackReach: 0.1, chainDepth: 2, smear: 0, passes: 0, ...NO_BASE,
+      crackReach: 0.1, chainDepth: 2, smear: 0, passes: 0, cut: 0, ...NO_BASE,
       perFlake: 1.6, friction: 5, curls: 0, flutter: 1,
       sheen: 1.4, streak: 0, glitter: 1.2, lip: 0.8, lift: 1.6,
     },
@@ -122,6 +122,25 @@ export const COATS: Record<CoatId, CoatDef> = {
     rate: 1.5,
     stiffness: 0.95,
     sharp: 0.5,
+    glassy: 0,
+  },
+  // Scratch-art wax: black wax over a rainbow. It's ductile, so the edge cuts a clean groove and the
+  // wax comes off as one continuous shaving that curls into a coil (see shavings.ts). No crumbs.
+  wax: {
+    id: 'wax',
+    label: 'Scratch-art wax',
+    mode: 5,
+    colour: [0.06, 0.06, 0.07],
+    set: {
+      flakeSize: 3, flakeSpread: 0.3, strength: 50, adhesionNoise: 0, brittleness: 0, abrasionResist: 1, speedGain: 0,
+      crackReach: 0.2, chainDepth: 0, smear: 0, passes: 0, cut: 1, ...NO_BASE,
+      perFlake: 0, friction: 9, curls: 0, flutter: 0,
+      sheen: 1, streak: 0, glitter: 0, lip: 2.5, lift: 0,
+    },
+    pitch: 0.6,
+    rate: 1,
+    stiffness: 0.3,
+    sharp: 0.25,
     glassy: 0,
   },
 };
