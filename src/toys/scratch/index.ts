@@ -3,6 +3,7 @@ import type { Loop, Slip } from '../../shell/sound';
 import { Coat, type CoatParams, type ToolShape } from './coat';
 import { Crumbs, type CrumbParams } from './crumbs';
 import { CARD_ASPECT, COAT_BOX, inCoat, makeCard, paintCard, paintCoatPrint, type Card } from './card';
+import { COAT_IDS, COATS, type CoatDef, type CoatId } from './coats';
 import { ScratchRenderer, type CardPose, type ToolView } from './render';
 
 export const scratchToy: Toy = {
@@ -89,6 +90,10 @@ class ScratchOff implements ToyInstance {
   private frameNo = 0;
   private seed = (Math.random() * 1e9) | 0;
   private tool: ToolId = 'coin';
+  /** 'card' = each ticket's own coat; otherwise every card gets this one. */
+  private coatPick: CoatId | 'card' = 'card';
+  private coatDef: CoatDef = COATS.silver;
+  private coatApplied = false;
   private last = new Map<number, { x: number; y: number; ux: number; uy: number }>();
   private toolView: ToolView = { kind: 0, x: 0, y: 0, ux: 0, uy: 1, r: 1, press: 1, alpha: 0 };
   /** Range of pressure and contact size seen so far: if either moves, the screen can sense it. */
@@ -148,6 +153,9 @@ class ScratchOff implements ToyInstance {
     brittleness: 0.35,
     abrasionResist: 1,
     speedGain: 0.4,
+    crackReach: 0.2,
+    chainDepth: 6,
+    smear: 0,
     // Tool
     toolSize: 1,
     toolHardness: 1,
@@ -296,6 +304,9 @@ class ScratchOff implements ToyInstance {
       brittleness: c.brittleness,
       abrasionResist: c.abrasionResist,
       speedGain: c.speedGain,
+      crackReach: c.crackReach,
+      chainDepth: c.chainDepth,
+      smear: c.smear,
     };
   }
 
@@ -307,6 +318,7 @@ class ScratchOff implements ToyInstance {
   private newCard() {
     this.seed = (this.seed * 1664525 + 1013904223) >>> 0;
     this.card = makeCard(this.seed, this.cfg.winChance);
+    this.applyCoat(this.coatPick === 'card' ? this.card.design.coat : this.coatPick);
     const pr = this.ctx.pixelRatio;
     this.GW = Math.round(Math.min(300, Math.max(170, this.pose.w / pr / 1.3)));
     this.GH = Math.round(this.GW / CARD_ASPECT);
@@ -315,6 +327,16 @@ class ScratchOff implements ToyInstance {
     paintCoatPrint(this.card, this.print, Math.round(artW * 0.6));
     this.crumbs = new Crumbs();
     this.recoat();
+  }
+
+  /** Load a coat's settings (the Tune panel then edits that coat). */
+  private applyCoat(id: CoatId) {
+    const def = COATS[id];
+    if (def === this.coatDef && this.coatApplied) return;
+    this.coatDef = def;
+    this.coatApplied = true;
+    Object.assign(this.cfg, def.set);
+    this.ctx.panel.sync();
   }
 
   private recoat() {
@@ -350,6 +372,16 @@ class ScratchOff implements ToyInstance {
     panel.action('New card', () => this.nextCard());
     panel.action('Re-coat this card', () => this.recoat());
     panel.heading('Coat');
+    panel.choice(
+      'Material',
+      [{ value: 'card' as const, label: "Card's own" }, ...COAT_IDS.map((id) => ({ value: id, label: COATS[id].label }))],
+      this.coatPick,
+      (v) => {
+        this.coatPick = v;
+        this.applyCoat(v === 'card' ? this.card.design.coat : v);
+        this.recoat();
+      },
+    );
     panel.slider(c, 'flakeSize', { label: 'Flake size', min: 1.5, max: 14, step: 0.5, onChange: later });
     panel.slider(c, 'flakeSpread', { label: 'Flake size spread', min: 0, max: 1, step: 0.05, onChange: later });
     panel.slider(c, 'adhesionNoise', { label: 'Stubborn patches', min: 0, max: 1, step: 0.05, onChange: later });
@@ -357,6 +389,9 @@ class ScratchOff implements ToyInstance {
     panel.slider(c, 'brittleness', { label: 'Brittleness', min: 0, max: 1.5, step: 0.05 });
     panel.slider(c, 'abrasionResist', { label: 'Scuff resistance', min: 0.2, max: 5, step: 0.1 });
     panel.slider(c, 'speedGain', { label: 'Speed bite', min: 0, max: 2, step: 0.05 });
+    panel.slider(c, 'crackReach', { label: 'Crack reach (0 = runs ahead)', min: 0, max: 0.6, step: 0.01 });
+    panel.slider(c, 'chainDepth', { label: 'Crack run (flakes)', min: 0, max: 12, step: 1 });
+    panel.slider(c, 'smear', { label: 'Smear', min: 0, max: 0.9, step: 0.05 });
     panel.heading('Tool');
     panel.slider(c, 'toolSize', { label: 'Size', min: 0.4, max: 3, step: 0.05 });
     panel.slider(c, 'toolHardness', { label: 'Hardness', min: 0.2, max: 3, step: 0.05 });
@@ -561,7 +596,8 @@ class ScratchOff implements ToyInstance {
       pose: this.pose,
       lamp: [this.width * (0.5 + (L[0] - 0.5) * 0.25), this.height * 0.2],
       light: L,
-      foil: this.card.design.foil,
+      foil: this.coatDef.id === 'silver' ? this.card.design.foil : this.coatDef.colour,
+      mode: this.coatDef.mode,
       look: this.cfg,
       time: t,
       flash: this.flash,
@@ -643,7 +679,10 @@ class ScratchOff implements ToyInstance {
       if (clicks < budget && this.cfg.grit > 0) {
         clicks++;
         const e = Math.min(1, (Math.sqrt(area) / 5) * (0.5 + co.bStrength[i] * 0.4) * (0.55 + tool.sharp * 0.45)) * Math.min(1, this.cfg.grit);
-        s.crumple(e * (co.bChain[i] ? 0.7 : 1), { stiffness: 0.3 + this.cfg.brittleness * 0.35 + tool.sharp * 0.3, pan: (co.bx[i] / this.GW) * 2 - 1 });
+        const cd = this.coatDef, pan = (co.bx[i] / this.GW) * 2 - 1;
+        s.crumple(e * (co.bChain[i] ? 0.7 : 1), { stiffness: Math.min(1, cd.stiffness * 0.6 + this.cfg.brittleness * 0.2 + tool.sharp * 0.25), pan });
+        // Lacquer shards ring like tiny bits of glass.
+        if (cd.glassy && Math.random() < cd.glassy) s.impact('glass', 0.008 + Math.sqrt(area) * 0.0015, Math.min(1, e * 1.2), { pan });
       }
     }
   }
@@ -813,8 +852,10 @@ class ScratchOff implements ToyInstance {
       const cross = o.touching ? this.coat.crossings / Math.max(dt, 1e-3) : 0;
       this.crossRate += (cross - this.crossRate) * Math.min(1, dt * 18);
       const drag = Math.min(1.6, Math.max(0.6, 1 + cfg.drag * (this.coat.adhesion - 1) * 0.5));
-      const rate = Math.min(700, 20 + this.crossRate * cfg.grain * o.tool.rough);
-      this.scrape.set(this.scrapeLvl * cfg.scrapeGain * (0.65 + 0.35 * pr) * drag, rate, (o.tool.freq * (0.85 + onCoat * 0.3) * (1.12 - 0.12 * pr)) / Math.sqrt(drag), o.pan * 0.6);
+      const cd = this.coatDef;
+      const rate = Math.min(700, 20 + this.crossRate * cfg.grain * o.tool.rough * cd.rate);
+      const freq = (o.tool.freq * cd.pitch * (0.85 + onCoat * 0.3) * (1.12 - 0.12 * pr)) / Math.sqrt(drag);
+      this.scrape.set(this.scrapeLvl * cfg.scrapeGain * (0.65 + 0.35 * pr) * drag, rate, freq, o.pan * 0.6);
       this.grit.set(Math.min(1, Math.max(0, breaks - 6) / 14) * cfg.grit, 0.85);
     } else this.scrape.set(0, 30, o.tool.freq);
     this.paper.set(this.paperLvl * 0.22 * cfg.scrapeGain, 0.55);
@@ -834,7 +875,7 @@ class ScratchOff implements ToyInstance {
     }
     if (o.touching && this.phase === 'scratch') {
       const level = (onCoat * Math.min(1, this.speedS) * 0.35 + Math.min(0.65, breaks * 0.07) + onPaper * this.speedS * 0.08) * cfg.hapticGain;
-      if (level > 0.02) ctx.hapticLevel(Math.min(1, level * (0.7 + 0.3 * this.press)), o.tool.sharp);
+      if (level > 0.02) ctx.hapticLevel(Math.min(1, level * (0.7 + 0.3 * this.press)), Math.min(1, o.tool.sharp * this.coatDef.sharp));
     }
   }
 

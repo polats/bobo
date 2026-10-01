@@ -84,8 +84,13 @@ The meta exists to change the scratching. Currency only pays for upgrades. Every
 
 1. **Feel prototype** (done). Silver coat, flakes, crumbs, blowing, four tools, a match-3 card, the full Tune panel. 60 fps on an iPhone 13 mini.
 2. **Scratch feel** (now). A visible tool held at the stroke's angle; flakes that lift and curl before they pop; crumbs that roll into curls; pressure, contact size or holding still biting deeper. Each piece is a setting from the start, so upgrades can change it. Soak and tune on both phones.
-3. **Upgrade layer.** The base → coat → upgrades stack, meta off, A/B toggles, and the Tool and Technique tracks.
-4. **Coats.** Crackle coat, gold leaf and scratch-art wax as card tiers.
+3. **Coats** (moved ahead of the upgrade layer: the biggest change you can see and feel, and the content upgrades need). *First pass built* (`coats.ts`): each coat bundles its sim settings, look, sound and crumb behaviour; each card design has its own, and Tune's Material choice puts any coat on any card.
+   - **Silver:** the phase 1 coat.
+   - **Crackle:** a dark lacquer crazed with pale lines; big plates, cracks that run a couple of flakes into untouched coat, straight-edged shards, glassy ticks (`impact('glass')`).
+   - **Budget latex:** matte rubber that barely pops; it wears and smears ahead of the edge into grey smudges and ridges, rolls into eraser curls, squeaks low and buzzes soft.
+   - **Holo:** a foil embossed with concentric grating rings; colour from the grating equation (first and second orders, CIE observer) that sweeps round as the lamp moves; rainbow crumbs.
+   - **Next:** gold leaf (tearing, fluttering leaf), then scratch-art wax (a continuous curling shaving ribbon).
+4. **Upgrade layer.** The base → coat → upgrades stack, meta off, A/B toggles, and the Tool and Technique tracks.
 5. **Crumbs and streaks.** Cling, sweep, the silver dust bonus, the combo ladder, lucky flakes.
 6. **Economy.** Prices, the balancing simulator, saving, the offline card stack, the jar as the bank.
 7. **Automation.** The robot hand.

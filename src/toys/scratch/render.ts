@@ -73,12 +73,21 @@ uniform float uSheen, uStreak, uGlitter, uLip, uLift, uTime, uFlash, uRadius;
 uniform vec4 uWin[3];
 uniform float uWinOn;
 uniform vec3 uDent;    // where the finger presses (card px) and how hard (0..1)
+uniform int uMode;     // coat: 0 silver, 1 crackle lacquer, 2 rubbery latex, 3 holographic grating
 out vec4 o;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// CIE 1931 observer (Wyman, Sloan & Shirley's lobes, as in Bubble Wand) to linear sRGB, for one wavelength in nm.
+float lobe(float l, float a, float m, float g, float d) { float t = (l - m) * (l < m ? g : d); return a * exp(-0.5 * t * t); }
+vec3 spectral(float l) {
+  float X = lobe(l, 0.362, 442.0, 0.0624, 0.0374) + lobe(l, 1.056, 599.8, 0.0264, 0.0323) + lobe(l, -0.065, 501.1, 0.049, 0.0382);
+  float Y = lobe(l, 0.821, 568.8, 0.0213, 0.0247) + lobe(l, 0.286, 530.9, 0.0613, 0.0322);
+  float Z = lobe(l, 1.217, 437.0, 0.0845, 0.0278) + lobe(l, 0.681, 459.0, 0.0385, 0.0725);
+  return max(vec3(3.2406 * X - 1.5372 * Y - 0.4986 * Z, -0.9689 * X + 1.8758 * Y + 0.0415 * Z, 0.0557 * X - 0.204 * Y + 1.057 * Z), 0.0);
+}
 float sdBox(vec2 p, vec2 b, float r) { vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
 // Coat height: a flake working loose rises off the card before it pops.
 float lifted(float dmg) { return uLift * smoothstep(0.35, 1.0, dmg); }
-float height(vec2 uv) { vec4 c = texture(uCoat, uv); return c.r * (1.0 + lifted(c.g)); }
+float height(vec2 uv) { vec4 c = texture(uCoat, uv); return c.r * 1.25 * (1.0 + lifted(c.g)); }
 void main() {
   vec2 px = vUv * uPx;
   float corner = sdBox(px - uPx * 0.5, uPx * 0.5, uRadius);
@@ -87,7 +96,7 @@ void main() {
   vec3 paper = texture(uArt, vUv).rgb;
   vec2 tx = 1.0 / uGrid;
   vec4 cs = texture(uCoat, vUv);
-  float h = cs.r, dmg = cs.g;
+  float h = cs.r * 1.25, dmg = cs.g;
   vec2 push = cs.ba * 2.0 - 1.0;
   vec4 st = texture(uStill, vUv);
   float hx = height(vUv + vec2(tx.x, 0.0)) - height(vUv - vec2(tx.x, 0.0));
@@ -107,12 +116,17 @@ void main() {
   float fw = fwidth(h) + 0.03;
   float a = smoothstep(e - fw, e + fw, h);
   vec2 toL = normalize(L.xy + 1e-4) * tx * 1.8;
-  float hs = texture(uCoat, vUv + toL).r;
+  float hs = texture(uCoat, vUv + toL).r * 1.25;
   paper *= 1.0 - 0.38 * smoothstep(0.3, 0.7, hs) * (1.0 - a);
   paper *= 1.0 + dot(-dentG, normalize(L.xy + 1e-4)) * 0.5 - dent * 0.06;
   float res = smoothstep(0.04, e, h) * (1.0 - a);
-  float speck = step(hash(floor(px / 1.6)), res * 1.1);
-  paper = mix(paper, uFoil * 0.55, speck * 0.75);
+  if (uMode == 2) {
+    // Rubbery latex leaves smooth grey smudges, not speckle.
+    paper = mix(paper, uFoil * 0.8, smoothstep(0.02, 0.3, h) * (1.0 - a) * 0.85);
+  } else {
+    float speck = step(hash(floor(px / 1.6)), res * 1.1);
+    paper = mix(paper, uFoil * 0.55, speck * 0.75);
+  }
 
   // Coat: height-field normal (the lip), per-flake tilt that grows as a flake works loose. Intact
   // coat is nearly flat (you can't see the flakes until they start to give).
@@ -126,15 +140,36 @@ void main() {
   float spec = pow(nh, 24.0) * 0.32 * uSheen * (0.5 + streak * uStreak * 0.7) * (1.0 - worn * 0.85);
   // Glitter: the odd pigment speck catching the lamp, and loosened flakes flashing as they tilt.
   float speckG = step(0.985, hash(floor(px / 2.0))) * pow(nh, 60.0);
-  float lifted = pow(max(dot(normalize(vec3((st.rg - 0.5) * 0.7, 1.0)), H), 0.0), 300.0) * dmg * dmg;
-  float glint = (speckG * 0.9 + lifted * 0.8) * uGlitter * (1.0 - worn);
+  float loose = pow(max(dot(normalize(vec3((st.rg - 0.5) * 0.7, 1.0)), H), 0.0), 300.0) * dmg * dmg;
+  float glint = (speckG * 0.9 + loose * 0.8) * uGlitter * (1.0 - worn);
   vec3 foil = uFoil * diff * (0.9 + 0.1 * streak) * (1.0 - worn * 0.3);
-  foil += vec3(spec + glint);
+  if (uMode == 1) {
+    // Lacquer: a deep glossy coat with a sharp lamp reflection, crazed all over with fine pale cracks
+    // that open wider as plates work loose.
+    float gloss = pow(nh, 160.0) * 1.4 * uSheen + pow(nh, 12.0) * 0.12 * uSheen;
+    float craze = st.b * (0.35 + 0.65 * smoothstep(0.1, 0.8, dmg));
+    foil = uFoil * (0.7 + 0.3 * diff) + gloss + glint * 0.5;
+    foil = mix(foil, vec3(0.78, 0.7, 0.5) * (0.6 + 0.4 * diff), craze * 0.55);
+  } else if (uMode == 2) {
+    // Matte rubber with a fine grain.
+    float grainN = hash(floor(px / 1.2)) * 0.06;
+    foil = uFoil * (0.75 + 0.25 * diff) * (0.97 + grainN) * (1.0 - worn * 0.15) + spec * 0.3;
+  } else if (uMode == 3) {
+    // A diffraction grating embossed in concentric rings: the first and second orders from the grating
+    // equation, d sin(theta) = m lambda, seen from straight above, sweep round as the lamp moves.
+    vec2 rc = px - uPx * vec2(0.5, 0.56);
+    vec2 g = normalize(rc + 1e-3);
+    float sinT = abs(dot(L.xy, g)) + dot(n.xy, g) * 0.5 + (hash(floor(px / 3.0)) - 0.5) * 0.04;
+    float d = 1500.0;
+    vec3 rainbow = spectral(d * sinT) + 0.5 * spectral(d * sinT * 0.5);
+    foil = uFoil * diff * 0.8 + rainbow * 0.55 * uSheen * (1.0 - worn * 0.6) + vec3(spec + glint);
+  } else foil += vec3(spec + glint);
   foil = foil / (1.0 + max(foil - 0.85, 0.0));
   float ink = texture(uPrint, vUv).r;
-  foil = mix(foil, vec3(0.13, 0.14, 0.2) * diff + spec * 0.15, ink * 0.8);
+  vec3 inkCol = uMode == 1 ? vec3(0.85, 0.72, 0.42) : vec3(0.13, 0.14, 0.2);
+  foil = mix(foil, inkCol * diff + spec * 0.15, ink * 0.8);
   float crack = st.b * smoothstep(0.2, 0.95, dmg);
-  foil *= 1.0 - crack * 0.55;
+  foil *= 1.0 - crack * (uMode == 1 ? 0.2 : 0.55);
   vec3 col = mix(paper, foil, a);
 
   // Winning cells glow.
@@ -172,6 +207,15 @@ precision highp float;
 in float vRot, vShade, vAlpha, vSeed;
 uniform float uShadow;
 uniform float uCurl;
+uniform int uMode;
+// CIE 1931 observer (Wyman, Sloan & Shirley's lobes, as in Bubble Wand) to linear sRGB, for one wavelength in nm.
+float lobe(float l, float a, float m, float g, float d) { float t = (l - m) * (l < m ? g : d); return a * exp(-0.5 * t * t); }
+vec3 spectral(float l) {
+  float X = lobe(l, 0.362, 442.0, 0.0624, 0.0374) + lobe(l, 1.056, 599.8, 0.0264, 0.0323) + lobe(l, -0.065, 501.1, 0.049, 0.0382);
+  float Y = lobe(l, 0.821, 568.8, 0.0213, 0.0247) + lobe(l, 0.286, 530.9, 0.0613, 0.0322);
+  float Z = lobe(l, 1.217, 437.0, 0.0845, 0.0278) + lobe(l, 0.681, 459.0, 0.0385, 0.0725);
+  return max(vec3(3.2406 * X - 1.5372 * Y - 0.4986 * Z, -0.9689 * X + 1.8758 * Y + 0.0415 * Z, 0.0557 * X - 0.204 * Y + 1.057 * Z), 0.0);
+}
 uniform vec3 uFoil;
 uniform vec3 uLightDir;
 out vec4 o;
@@ -192,13 +236,21 @@ void main() {
     float sp = pow(max(dot(n, normalize(uLightDir + vec3(0, 0, 1))), 0.0), 24.0);
     float endR = length(vec2(abs(q.x) - 0.5, q.y));
     float spiral = (abs(q.x) > 0.5) ? 0.5 + 0.5 * sin(endR * 55.0 + atan(q.y, abs(q.x) - 0.5)) : 0.0;
-    vec3 col = mix(uFoil * diff * vShade + sp * 0.7, vec3(0.38, 0.38, 0.4) * diff, spiral * 0.75);
+    vec3 skin = uMode == 3 ? spectral(420.0 + fract(vSeed * 7.1 + dot(n.xy, uLightDir.xy)) * 260.0) * 0.8 + uFoil * 0.3 : uFoil;
+    vec3 col = mix(skin * diff * vShade + sp * 0.7, vec3(0.38, 0.38, 0.4) * diff, spiral * (uMode == 2 ? 0.3 : 0.75));
     o = vec4(col * aa * vAlpha, aa * vAlpha);
     return;
   }
   q.y /= 0.62;
   float th = atan(q.y, q.x);
   float r = 0.78 + 0.13 * sin(3.0 * th + vSeed * 6.28) + 0.08 * sin(5.0 * th + vSeed * 17.0);
+  if (uMode == 1) {
+    // Lacquer shards: straight-edged triangles and slivers.
+    float k = floor(3.0 + fract(vSeed * 5.3) * 2.0);
+    float seg = 6.28318 / k;
+    float a0 = th + vSeed * 6.28;
+    r = (0.92 - 0.25 * fract(vSeed * 9.7)) * cos(seg * 0.5) / cos(mod(a0, seg) - seg * 0.5);
+  }
   float l = length(q) / r;
   if (l > 1.0) discard;
   float aa = 1.0 - smoothstep(0.85, 1.0, l);
@@ -207,7 +259,9 @@ void main() {
   vec3 n = normalize(vec3(q * 0.9 + (vec2(fract(vSeed * 7.3), fract(vSeed * 3.1)) - 0.5) * 0.8, 1.0 - l * 0.6));
   float d = 0.45 + 0.55 * max(dot(n, uLightDir), 0.0);
   float sp = pow(max(dot(n, normalize(uLightDir + vec3(0, 0, 1))), 0.0), 40.0);
-  vec3 col = mix(uFoil * d * vShade, vec3(0.42, 0.42, 0.44) * d, smoothstep(0.55, 1.0, l) * 0.7) + sp * 0.8;
+  vec3 skin = uMode == 3 ? spectral(420.0 + fract(vSeed * 7.1 + dot(n.xy, uLightDir.xy)) * 260.0) * 0.8 + uFoil * 0.3 : uFoil;
+  float rim = uMode == 1 ? 0.15 : 0.7;
+  vec3 col = mix(skin * d * vShade, vec3(0.42, 0.42, 0.44) * d, smoothstep(0.55, 1.0, l) * rim) + sp * (uMode == 1 ? 1.4 : 0.8);
   o = vec4(col * aa * vAlpha, aa * vAlpha);
 }`;
 
@@ -461,6 +515,8 @@ export class ScratchRenderer {
     tool: ToolView;
     scale: number;
     dent: [number, number, number];
+    /** Coat look (see CoatDef.mode). */
+    mode: number;
   }) {
     const gl = this.gl;
     const { pose: c } = o;
@@ -501,6 +557,7 @@ export class ScratchRenderer {
     gl.uniform4fv(u['uWin[0]'], win);
     gl.uniform1f(u.uWinOn, o.winOn);
     gl.uniform3f(u.uDent, ...o.dent);
+    gl.uniform1i(u.uMode, o.mode);
     const units: [string, WebGLTexture][] = [['uArt', this.art], ['uPrint', this.print], ['uCoat', this.coatTex], ['uStill', this.still]];
     units.forEach(([name, t], i) => {
       gl.activeTexture(gl.TEXTURE0 + i);
@@ -534,6 +591,7 @@ export class ScratchRenderer {
       gl.uniform2f(u.uRes, o.width, o.height);
       gl.uniform3f(u.uFoil, ...o.foil);
       gl.uniform1f(u.uCurl, o.look.curls);
+      gl.uniform1i(u.uMode, o.mode);
       const lx = o.light[0] - 0.5, ly = o.light[1] - 0.5;
       const ll = Math.hypot(lx, ly) + 1e-3;
       const L = [lx, ly, o.light[2]];

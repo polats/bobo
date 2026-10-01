@@ -1,6 +1,7 @@
 /** Tweak panel: sliders, segmented choices and actions bound to plain objects. */
 export class Panel {
   readonly el: HTMLElement;
+  private syncers: (() => void)[] = [];
 
   constructor(parent: HTMLElement) {
     this.el = document.createElement('div');
@@ -42,7 +43,16 @@ export class Panel {
       opts.onChange?.(Number(input.value));
     });
     show();
+    this.syncers.push(() => {
+      input.value = String(obj[key]);
+      show();
+    });
     row.append(label, input);
+  }
+
+  /** Re-read every slider's value from its object (after a toy changes several settings at once). */
+  sync() {
+    for (const f of this.syncers) f();
   }
 
   choice<V extends string>(label: string, options: { value: V; label: string }[], current: V, onPick: (v: V) => void) {

@@ -20,6 +20,15 @@ export interface CoatParams {
   abrasionResist: number;
   /** How much faster strokes pop flakes. */
   speedGain: number;
+  /**
+   * Share of its strength a neighbour must already carry before a crack runs into it: 0.2 cracks only
+   * through coat the tool is working; 0 lets cracks race ahead into untouched coat (crackle varnish).
+   */
+  crackReach: number;
+  /** How many flakes a crack can run through from the one the tool popped. */
+  chainDepth: number;
+  /** Share of worn coat that's shoved ahead of the tool instead of crumbling (rubbery latex smears). */
+  smear: number;
 }
 
 export interface ToolShape {
@@ -67,6 +76,7 @@ export class Coat {
   private readonly touched: Int32Array;
   private nTouched = 0;
   private readonly queue: Int32Array;
+  private readonly depth: Uint8Array;
   coatCells = 0;
   goneFlakes = 0;
   /** CoatParams.strength as of the last settle, so the damage texture reads as a share of it. */
@@ -232,6 +242,7 @@ export class Coat {
     this.acc = new Float32Array(flakes);
     this.touched = new Int32Array(flakes);
     this.queue = new Int32Array(flakes);
+    this.depth = new Uint8Array(flakes);
     this.markDirty(0, H);
   }
 
@@ -255,7 +266,8 @@ export class Coat {
     for (let i = y0 * W; i < y1 * W; i++) {
       const f = flake[i];
       const o = i * 4;
-      tex[o] = h[i] * 255;
+      // Thickness is stored over 0..1.25 so smeared ridges (above a fresh coat) survive the upload.
+      tex[o] = Math.min(255, h[i] * 204);
       if (f < 0) {
         tex[o + 1] = 0;
         tex[o + 2] = tex[o + 3] = 128;
@@ -307,15 +319,27 @@ export class Coat {
         const c = yy * W + xx;
         const f = flake[c];
         const hc = h[c];
-        if (f < 0 || hc <= 0) {
+        if (f < 0 || hc <= 0 || this.fGone[f]) {
           bare += w;
+          // Smeared coat on bare card wears off again under the tool.
+          if (hc > 0) h[c] = Math.max(0, hc - wear * w * 2);
           continue;
         }
         contact += w * hc;
         adh += w * hc * this.fStrength[f];
         const a = Math.min(hc, wear * w * grain[c]);
         h[c] = hc - a;
-        this.abraded += a;
+        if (p.smear > 0 && a > 0) {
+          // Rubbery coat rolls ahead of the edge: onto coat it piles up, onto bare card it leaves a smudge.
+          const sx = Math.round(xx + ux * (rb + 1.5)), sy = Math.round(yy + uy * (rb + 1.5));
+          if (sx >= 0 && sy >= 0 && sx < W && sy < H) {
+            const c2 = sy * W + sx, f2 = flake[c2];
+            const m = a * p.smear;
+            if (f2 >= 0 && !this.fGone[f2]) h[c2] = Math.min(1.25, h[c2] + m * 0.6);
+            else h[c2] = Math.min(0.3, h[c2] + m);
+          }
+        }
+        this.abraded += a * (1 - p.smear);
         if (this.fGone[f]) continue;
         if (acc[f] === 0) touched[nt++] = f;
         const l = w * (hc - a) * load;
@@ -343,7 +367,7 @@ export class Coat {
       if (was !== -3 && id !== was && (id >= 0 || was >= 0)) this.crossings++;
       this.edgeIds[k] = id;
     }
-    this.markDirty(y0, y1 + 1);
+    this.markDirty(y0 - 3, y1 + 4);
   }
 
   /** Apply the loads gathered over this frame's substeps, popping flakes that give way. */
@@ -357,6 +381,7 @@ export class Coat {
       acc[f] = 0;
       if (!fGone[f] && fDamage[f] >= fStrength[f] * k) {
         fGone[f] = 2;
+        this.depth[f] = 0;
         this.queue[qn++] = f;
       }
     }
@@ -366,15 +391,16 @@ export class Coat {
     while (qi < qn) {
       const f = this.queue[qi++];
       this.pop(f, fGone[f] === 3);
-      if (p.brittleness <= 0 || qi > 400) continue;
-      for (let k = this.nStart[f]; k < this.nStart[f + 1]; k++) {
-        const g = this.nList[k];
-        if (fGone[g] || fDamage[g] < 0.2 * fStrength[g] * k) continue;
+      if (p.brittleness <= 0 || qi > 600 || this.depth[f] >= p.chainDepth) continue;
+      for (let j = this.nStart[f]; j < this.nStart[f + 1]; j++) {
+        const g = this.nList[j];
+        if (fGone[g] || fDamage[g] < p.crackReach * fStrength[g] * k) continue;
         fDamage[g] += p.brittleness * 0.55 * fStrength[g] * k * (0.5 + Math.random());
         if (fDamage[g] >= fStrength[g] * k) {
           fGone[g] = 3;
+          this.depth[g] = this.depth[f] + 1;
           this.queue[qn++] = g;
-        }
+        } else this.markDirty(this.fCy[g] - 6, this.fCy[g] + 6);
       }
     }
   }
